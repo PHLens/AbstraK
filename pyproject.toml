@@ -9,13 +9,14 @@ description = "Abstraction-aware experiments for agentic GPU kernel engineering"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-  "litellm>=1.75,<2",
+  "litellm==1.92.0",
   "pydantic>=2.11,<3",
   "pyyaml>=6.0.2,<7",
 ]
 
 [project.scripts]
 abstrak-doctor = "abstrak.doctor:main"
+abstrak-provider = "abstrak.providers.cli:main"
 
 [dependency-groups]
 dev = [

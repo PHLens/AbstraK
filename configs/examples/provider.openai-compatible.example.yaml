@@ -1,0 +1,16 @@
+schema_version: provider.v1
+id: example-openai-compatible
+adapter: litellm
+protocol: chat_completions
+litellm_provider: openai
+base_url_env: ABSTRAK_EXAMPLE_BASE_URL
+api_key_env: ABSTRAK_EXAMPLE_API_KEY
+timeout_seconds: 180
+retry:
+  max_attempts: 1
+transport:
+  stream: false
+  candidates: 1
+  allow_fallback: false
+  allow_cache: false
+  drop_unsupported_params: false

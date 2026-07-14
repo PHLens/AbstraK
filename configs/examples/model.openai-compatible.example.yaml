@@ -1,0 +1,20 @@
+schema_version: model.v1
+id: example-model
+provider: example-openai-compatible
+api_model: replace-with-exact-api-model-id
+model_id_policy: mutable_alias
+interface: chat_completions
+allow_live_probe: false
+generation:
+  max_completion_tokens: 128
+  temperature: null
+  top_p: null
+  api_seed: null
+  stop: []
+  reasoning_effort: null
+output_contract: plain_json
+capabilities:
+  usage_reporting: required
+  returned_model: required
+  system_messages: required
+pricing_ref: null

@@ -12,6 +12,9 @@ and provider conformance, not an optimization policy.
 ```bash
 uv sync
 uv run abstrak-doctor
+uv run abstrak-provider validate \
+  --provider configs/examples/provider.openai-compatible.example.yaml \
+  --model configs/examples/model.openai-compatible.example.yaml
 uv run pytest
 uv run ruff check .
 ```
@@ -48,3 +51,7 @@ The initial dependency set contains only the API transport and structured-config
 building blocks. Triton, TileLang, CuTe DSL, CUDA toolchains, and profiler
 dependencies will be installed in target-specific GPU images after oracle
 readiness checks, rather than being coupled to the local controller environment.
+
+P0.1 provider conformance is implemented as a strict, single-attempt boundary.
+See `docs/p0.1-provider-conformance.md`. Live probes require exact model IDs,
+environment-injected credentials, and an explicit `--live` acknowledgement.

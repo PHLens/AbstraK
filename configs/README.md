@@ -14,3 +14,9 @@ The planned manifest groups are:
 
 Directories and schemas will be added with their conformance tests. Do not add
 a production manifest until the corresponding adapter can validate it.
+
+The `examples/` manifests are non-runnable templates. Copy them to an ignored
+or private configuration location, replace every example identifier, and run
+the offline `abstrak-provider validate` command before any live probe. A model
+manifest becomes a production manifest only after its exact contents and live
+conformance artifact have been reviewed.
