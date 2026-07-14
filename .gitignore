@@ -1,0 +1,30 @@
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Experiment outputs are immutable records, but they do not belong in Git.
+artifacts/*
+!artifacts/README.md
+runs/
+
+# Compiler and profiler output.
+.triton/
+*.cubin
+*.fatbin
+*.ptx
+*.qdrep
+*.ncu-rep
+nsys-report-*
+
+# Editor and OS state.
+.idea/
+.vscode/
+.DS_Store
