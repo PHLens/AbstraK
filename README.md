@@ -9,15 +9,29 @@ and provider conformance, not an optimization policy.
 
 ## Quick start
 
+Create the local configuration described in `configs/README.md`, then run:
+
 ```bash
 uv sync
 uv run abstrak-doctor
-uv run abstrak-provider validate \
-  --provider configs/examples/provider.openai-compatible.example.yaml \
-  --model configs/examples/model.openai-compatible.example.yaml
+uv run abstrak-provider validate
 uv run pytest
 uv run ruff check .
 ```
+
+Provider commands read `~/.abstrak/config.yaml` by default. Offline validation
+does not read credentials. A live probe additionally reads
+`~/.abstrak/auth.json`:
+
+```bash
+uv run abstrak-provider smoke --live
+```
+
+Use `--config` or `--profile` to change configuration selection, and `--auth`
+on a smoke command to change the credential file. Existing scripts may continue
+to pass the legacy `--provider` and `--model` manifests as a pair. Non-empty
+process environment variables take precedence over values loaded from the auth
+file.
 
 Run the stricter probe on a GPU worker:
 
@@ -53,5 +67,5 @@ dependencies will be installed in target-specific GPU images after oracle
 readiness checks, rather than being coupled to the local controller environment.
 
 P0.1 provider conformance is implemented as a strict, single-attempt boundary.
-See `docs/p0.1-provider-conformance.md`. Live probes require exact model IDs,
-environment-injected credentials, and an explicit `--live` acknowledgement.
+See `docs/p0.1-provider-conformance.md`. Controlled probes require exact model IDs,
+resolved credentials, and an explicit `--live` acknowledgement.

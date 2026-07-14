@@ -1,0 +1,7 @@
+{
+  "schema_version": "auth.v1",
+  "environment": {
+    "ABSTRAK_EXAMPLE_API_KEY": "replace-with-provider-api-key",
+    "ABSTRAK_EXAMPLE_BASE_URL": "https://provider.example/v1"
+  }
+}
