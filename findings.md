@@ -9,6 +9,7 @@
 - 初期使用 DeepSeek API；OpenAI 后续按需要加入。
 - 初期不以 API 货币费用为评价指标，主要记录逻辑 token 和其他资源消耗。
 - 可用 GPU 是 NVIDIA A100 和 RTX 4090，时间预算不构成硬限制。
+- Pilot 必须依次回答 target selection 是否必要、Agent information 是否有 context-only 之外的增量价值，以及差异能否被低成本预测和利用。
 
 ## Current Repository State
 
@@ -21,8 +22,9 @@
 
 ## Proposal-Derived Research Constraints
 
-- RQ1 是 empirical premise：最有效 representation target 必须随 workload、hardware 或 Agent 出现稳定且 actionable 的 crossover。
-- RQ2 progressive realization 只有在 Gate R 通过后才值得实现。
+- R.1 是 selection premise：即使允许 hindsight 选择最强 fixed target，它仍必须在 qualification coverage 或 cost-to-qualified 上显著落后于 cell oracle；否则没有 adaptive target-selection 问题。
+- R.2 是 Agent premise：Agent-conditioned selector 必须在固定 workload/hardware 后，继续优于 context-only selector；否则使用 deterministic workload/hardware rules。
+- R.3 是 realization premise：behavioral profile 必须在计入 calibration 与 exploration cost 后优于 identity/rules/top-2/parallel baselines；只有 R.1–R.3 均通过才进入 progressive realization。
 - 首轮 target 候选为 Triton、TileLang、CuTeDSL；如果第三层没有 representation oracle，必须在正式 Agent 结果前替换或收缩 claim。
 - 首轮 workload 应包含一个 memory/data-movement family 和一个 compute/representation-dominated low-precision family。
 - 首轮 hardware 应是已有 backend 支持且存在 known qualified path 的环境；缺失 intrinsic/lowering/backend 属于 capability extension，不属于 router failure。
@@ -90,33 +92,31 @@
 - 正式 RQ1 数据中每个 target 独立运行；target oracle 仅在所有 runs 和独立 timing rerun 完成后 ex post 构造。
 - Sealed qualification 运行在独立 process/workspace，不向 Agent 返回逐例结果。
 - Failure taxonomy 至少区分 representation、compiler/backend、agent、profile、routing 和 environment/evaluator failure。
+- Baseline 必须形成递进 ladder：global fixed、per-Agent fixed、workload/hardware-only、加 Agent identity、加 behavioral profile、top-2/parallel 和 oracle；每层只声明相对直接前级的增量价值。
+- R.1 同时使用 global hindsight fixed 和更强的 per-Agent hindsight fixed。前者失败只证明 portfolio 有价值；后者仍失败才证明 workload/hardware/task-local selection 有价值。
+- A100 P1 negative result 不能否定未测量的 hardware effect；两个 Agents 跨 A100/4090 的 mandatory 96-trajectory matrix 完成后才判定整体 R.1，第三 Agent 是可选外部有效性扩展。
 - Full progressive switching policy 不在 Gate R pilot 前实现，避免先造复杂系统再寻找 headroom。
 
 ## Go/No-Go Logic
 
-### Continue Toward P2
+### R.1 Target-Selection Necessity
 
-- P1 至少出现一个超过 timing noise 和 utility margin 的 target frontier signal。
-- retained cells 有完整 representation oracle 和稳定 qualification。
-- 信号不是由 unsupported target、unequal examples/primitives、cache 或 evaluator bug造成。
+- 对相同 matched cells 比较 calibration fixed、global/per-Agent hindsight fixed 与 qualification-first cell oracle。
+- Headline 使用 qualification coverage deficit、actionable opportunity rate 和 conditional serial-wall-clock regret；winner label diversity 只作支持证据。
+- 至少两个 lineage-isolated semantic members、至少两个 non-tied winners 支撑超过 `delta_Q` 或 `delta_C` 的差异，才构成 Go。
+- Workload 和 hardware matched contrasts 分别报告；只通过一个时收缩 claim。Unsupported backend、asset imbalance、tie 和 timing noise 不计作 evidence。
 
-### Gate R Go
+### R.2 Agent Incremental Value
 
-- 四个 workload–hardware blocks 中至少两个存在 actionable crossover。
-- 至少一个 matched set 的 frontier 随 Agent 改变。
-- Behavioral calibration 相对 workload+hardware rules/feature-only baseline 提供额外预测价值。
-- Calibration 在预注册 family size 内 break even。
-- Fixed/rules/top-2/parallel 未共同消除 progressive selection 的可测空间。
-- 错误 target exploration 占 cost-to-qualified 的比例足够高。
+- 固定 workload/hardware 后，Agent-dependent target frontier change 必须由至少两个独立 semantic contexts 支撑。
+- Agent-conditioned selector 必须相对 workload/hardware-only selector 产生超过预注册 margin 的 qualification 或 cost 增益。
+- 若不通过，保留 R.1 characterization，系统收缩为 deterministic context selector。
 
-### Gate R No-Go
+### R.3 Low-Cost Predict-and-Exploit
 
-- Winner 基本固定或只因计时噪声翻转。
-- Agent profile 没有额外决策信息。
-- Top-2 或 parallel all-target 足够便宜。
-- Representation effect 在平衡 primitives/examples/tools/budget 后消失。
-- 所有 targets 都达不到合理门槛，瓶颈属于 Kernel generation。
-- 主要失败来自 backend/primitive 缺失，问题应转为 capability extension。
+- Behavioral profile 必须优于 Agent identity 与 context-only baselines，且 calibration 在预注册 family size 内 break even。
+- Top-2、successive halving 或 parallel all-target 若以等价或更低总成本获得结果，则不建设复杂 progressive policy。
+- 三层均通过才创建 Gate P；否则分别落到 fixed、per-Agent default、context rule 或 direct exploration。
 
 ## Open Questions
 
@@ -126,7 +126,7 @@
 - W4A8 contract 和最强 applicable `B*` 如何选择？
 - Qualification threshold、noise margin、utility margin 和 tolerance 的具体值是多少？
 - `B_L/B_H` 各资源轴的 cap 应根据什么 baseline dry run 冻结？
-- P2 第三 family 选择 GLM 还是 Qwen？
+- 可选 P2b 第三 capability tier 使用 DeepSeek Pro 还是剩余 GLM/Qwen endpoint？
 - A100 还是 RTX 4090 作为 P1 first hardware；当前计划默认 A100。
 
 ## Risks and Mitigations
@@ -159,10 +159,10 @@
 
 - Planning files 已按长内容分段写入；精确行数在每次大修后重新检查，不作为 protocol 内容。
 - `task_plan.md` 恰好包含 Phase 1–7，顺序正确且只有 Phase 1 为 `in_progress`。
-- 修订后的 P1 arithmetic 为 48 条 high-budget trajectories 加 48 个 nested anytime checkpoints；P2 完整矩阵为 144 加 144。
+- 修订后的 P1 arithmetic 为 48 条 high-budget trajectories 加 48 个 nested anytime checkpoints；mandatory dual-hardware P2a 为 96 加 96，可选第三 Agent P2b 后为 144 加 144。
 - Whitespace/EOF scan 通过，三份文件均以单个 newline 结束。
 - 三份文件没有 Obsidian-style internal links、Markdown tables 或 Mermaid，避免已知渲染问题。
-- 只有三个 planning files 是未跟踪文件，没有代码、proposal 或本地认证配置变更。
+- 三个 planning files 已纳入版本控制；本轮仍只修改这些 planning files，没有代码、proposal 或本地认证配置变更。
 - 两路独立审查的 critical/major findings 已转化为 plan contracts，而不是只保留为评论：replication、budget semantics、alias eligibility、decision utility、cross-family P1、target-stack claim、worker security、baseline freeze 和 realistic schedule。
 
 ## Independent Engineering Review Findings
@@ -170,7 +170,7 @@
 以下问题必须在 plan 定稿前修正：
 
 - 当前 12/36 matrix 等价于每个随机 cell 一次 trajectory，无法区分 model sampling/alias drift 与 representation effect，也不足以支撑 qualification probability、Brier/ECE 或层次模型。
-- Pilot 应在每个 workload family 内加入至少两个 lineage-distinct semantic task packs，并为每个 Agent–task–target–hardware cell 运行至少两个独立 replicate。这样 P1 为 48 条，P2 full matrix 为 144 条；paper-scale 样本量仍在 pilot 后重新估计。
+- Pilot 应在每个 workload family 内加入至少两个 lineage-distinct semantic task packs，并为每个 Agent–task–target–hardware cell 运行至少两个独立 replicate。初版因此得到 P1 48、含第三 Agent 的 full matrix 144；后续分层 Gate 将双 Agent、双 hardware 的 96 条设为最低完整矩阵，第三 Agent 作为可选扩展。
 - 从同一 `B_H` trajectory 截取的 `B_L` 只能称为 anytime/resource checkpoint，不能声称是“知道低预算”的 budget-conditioned Agent。若以后研究 budget-aware behavior，必须单独运行明确告知 `B_L` 的策略。
 - 多轴预算必须定义 event-boundary reservation、in-flight overshoot、hard cap 和 terminal classification。
 - P0.1 的严格 `pilot_ready` 会拒绝 mutable alias。Exploratory pilot 应新增 study-scoped eligibility：要求 transport/action protocol ready、完整 alias provenance、batch 前后 conformance 和显式 reproducibility warning；不能静默改变 `pilot_ready` 的含义。
@@ -212,10 +212,33 @@
 ## Final Mechanical Verification
 
 - `task_plan.md` 包含且仅包含七个有序 phases；Phase 1 是唯一 `in_progress`，其余六个为 `pending`。
-- P1/P2 公式分别得到 48/144 条 high-budget trajectories，并为每条保留一个 nested anytime checkpoint。
+- P1、mandatory P2a、optional P2b 公式分别得到 48/96/144 条 high-budget trajectories，并为每条保留一个 nested anytime checkpoint。
 - Cell-level oracle、replicate stability、semantic-member independence、`B_L` sealed qualification 和 cross-family P1 均可从 plan 中直接定位。
 - Whitespace/EOF scan 通过；planning files 不包含 Obsidian-style internal links、Markdown tables 或 Mermaid。
-- 工作区只新增 `task_plan.md`、`findings.md` 和 `progress.md`，没有代码、proposal、artifact 或认证文件变化。
+- 本轮工作区只修改 `task_plan.md`、`findings.md` 和 `progress.md`，没有代码、proposal、artifact 或认证文件变化。
+
+## Naive KernelBench Screen Implementation
+
+- AbstraK 与 pinned KernelBench 现在统一固定为 CPython `3.10.*`；项目已移除 `StrEnum`、`datetime.UTC`、stdlib `tomllib` 和 PEP 695 泛型等 3.11/3.12-only 用法，不再需要双 Python sidecar。
+- 首个实现不建设通用 Agent loop，而是严格分离单次生成 controller 与 GPU evaluator。Controller 只读取 pinned KernelBench task/prompt，不导入 Torch 或执行候选代码。
+- KernelBench 固定在 commit `423217d9fda91e0c2d67e4a43bf62f96f6d104f1`；只接受官方 `zero_shot` component sequence，checkout commit 不符或有本地修改时 fail closed。
+- Bring-up matrix 为 DeepSeek V4 Flash/Pro × KernelBench `triton`/`tilelang`/`cute`。Smoke 是 square GEMM 的 6 cells；screen 增加 batched GEMM、LayerNorm 和 GEMM+Add+ReLU，共 24 cells。
+- 每 cell 恰好一个 user message、一个 provider call、`turn_index=0`、temperature 0、8192 completion tokens、plain-text output；不会修改 `~/.abstrak/config.yaml` 中 P0.1 的 128-token/plain-JSON profile。
+- 生成与评价使用独立 sealed bundles。评价前验证生成 checksum，显式要求 generated-code execution acknowledgement，并从 worker 环境移除常见 credential variables。
+- Worker 记录 device、Python、Torch/CUDA 和可发现的 Triton/TileLang/CuTe package version；GPU 环境和正式 hostile-code isolation 仍待后续提供与实现。
+- 初步 summary 按 Agent profile/target 报告 compile、correctness、performance coverage、relative-to-PyTorch ratio 与 `fast_1/fast_2`。单 replicate 结果只作 descriptive screen；negative result 不属于 equivalence evidence。
+- 离线 smoke/screen 均能在 pinned checkout 上稳定解析 task 和生成 prompt hashes；没有进行 billable API 请求或 GPU 执行。
+
+## A100 Worker Environment Bring-Up
+
+- 远端 worker 为 Ubuntu 24.04、两张 A100-SXM4-80GB（SM80）、NVIDIA driver `575.57.08` 与系统 CUDA `12.6`。
+- KernelBench 明确要求 Python 3.10；实验环境因此统一为 CPython `3.10.20`，不使用镜像中的 Python 3.12/Torch development 环境。
+- PyTorch 锁定为当前 stable `2.13.0+cu126`，同一环境中锁定 Triton `3.7.1`、TileLang `0.1.12`、CuTe DSL `4.6.1`、`cuda-python`/`cuda-bindings` `12.9.5`。
+- 持久卷只保留 AbstraK/KernelBench source、Python 3.10 runtime、portable Git、lock 和经 SHA-256 校验的离线 wheel archive；GPU venv、wheel staging 和 uv cache 在每次容器重建后放到 `/tmp`。这个分层避免 NFS 上的大量 metadata/import/JIT 开销。
+- `scripts/bootstrap-a100.sh` 校验 KernelBench commit、wheel archive hash、精确 package versions、driver 下界、SM80 设备和 Torch FP16 CUDA 运算，任一不符即 fail closed。
+- KernelBench 自带的 trusted add examples 在 Triton、TileLang 和 CuTe DSL 上均已 compile 且 correctness 通过，并完成 candidate/reference timing。这些只证明 toolchain 可用，不作为 Agent 性能结果。
+- Remote AbstraK test suite 为 68 passed，Ruff 通过。本轮没有 API 调用，也没有执行模型生成的代码。
+- 远端尚无 `/root/.abstrak/config.yaml`，因此 study profile validation 会正常 fail closed；这与 GPU/toolchain 可用性无关。worker 也未安装 Docker，故 hostile generated-code isolation 仍是正式 live generation 前的独立 exit gate。
 
 ---
 

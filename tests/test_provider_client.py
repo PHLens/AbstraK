@@ -43,6 +43,7 @@ def test_single_call_and_response_normalization(
     sent = transport.requests[0]
     assert sent["api_key"] == provider_environment["TEST_API_KEY"]
     assert sent["base_url"] == provider_environment["TEST_BASE_URL"]
+    assert sent["messages"][0]["role"] == "system"
     assert sent["messages"][0]["content"].endswith("  ")
     assert sent["stream"] is False
     assert sent["n"] == 1
@@ -60,6 +61,7 @@ def test_single_call_and_response_normalization(
     artifact_text = str(response.model_dump(mode="json"))
     assert provider_environment["TEST_API_KEY"] not in artifact_text
     assert provider_environment["TEST_BASE_URL"] not in artifact_text
+    assert str(MessageRole.USER) == "user"
 
 
 def test_missing_usage_remains_unknown(

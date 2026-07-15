@@ -7,15 +7,30 @@ name = "abstrak"
 version = "0.1.0"
 description = "Abstraction-aware experiments for agentic GPU kernel engineering"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "==3.10.*"
 dependencies = [
   "litellm==1.92.0",
   "pydantic>=2.11,<3",
   "pyyaml>=6.0.2,<7",
+  "tomli>=2.2,<3",
+]
+
+[project.optional-dependencies]
+gpu = [
+  "cuda-bindings==12.9.5",
+  "cuda-python==12.9.5",
+  "einops>=0.8.1,<0.9",
+  "ninja>=1.13,<2",
+  "numpy>=2.0,<2.3",
+  "nvidia-cutlass-dsl==4.6.1",
+  "tabulate>=0.9,<1",
+  "tilelang==0.1.12",
+  "torch==2.13.0",
 ]
 
 [project.scripts]
 abstrak-doctor = "abstrak.doctor:main"
+abstrak-kernelbench = "abstrak.evaluation.cli:main"
 abstrak-provider = "abstrak.providers.cli:main"
 
 [dependency-groups]
@@ -33,7 +48,15 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }

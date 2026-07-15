@@ -1,0 +1,40 @@
+schema_version: kernelbench-naive-study.v1
+id: kernelbench-naive-screen
+source:
+  repository: https://github.com/ScalingIntelligence/KernelBench.git
+  commit: 423217d9fda91e0c2d67e4a43bf62f96f6d104f1
+  require_clean_checkout: true
+profiles:
+  - deepseek-v4-flash
+  - deepseek-v4-pro
+targets:
+  - triton
+  - tilelang
+  - cute
+tasks:
+  - level: 1
+    problem_id: 1
+    stratum: dense-compute
+  - level: 1
+    problem_id: 3
+    stratum: batched-compute
+  - level: 1
+    problem_id: 40
+    stratum: normalization
+  - level: 2
+    problem_id: 76
+    stratum: fusion
+precision: fp16
+prompt_mode: kernelbench_zero_shot
+include_hardware_prompt: false
+generation:
+  max_completion_tokens: 8192
+  temperature: 0
+  repetitions: 1
+evaluator:
+  num_correct_trials: 5
+  num_perf_trials: 100
+  timing_method: cuda_event
+  timeout_seconds: 300
+  excessive_speedup_threshold: 10
+  static_check: true

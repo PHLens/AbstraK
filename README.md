@@ -9,6 +9,10 @@ and provider conformance, not an optimization policy.
 
 ## Quick start
 
+AbstraK is pinned to Python 3.10 to share one runtime with the pinned
+KernelBench evaluator. With `uv`, the tracked `.python-version` selects the
+compatible interpreter automatically.
+
 Create the local configuration described in `configs/README.md`, then run:
 
 ```bash
@@ -36,12 +40,17 @@ file.
 Run the stricter probe on a GPU worker:
 
 ```bash
-uv run abstrak-doctor --require-gpu
+scripts/bootstrap-a100.sh
+source scripts/activate-a100.sh
+abstrak-doctor --require-gpu
 ```
 
 The local controller does not require a GPU. Compilation, qualification, and
 performance measurement must run on a declared GPU worker with a frozen
-software manifest.
+software manifest. The current A100 worker uses Python 3.10, PyTorch 2.13.0,
+and the CUDA 12.6 wheel index. Source, locks, wheels, and artifacts stay on the
+persistent volume; the GPU venv is rebuilt on container-local storage by
+`scripts/bootstrap-a100.sh` so imports and JIT compilation do not run over NFS.
 
 ## Repository layout
 
@@ -61,11 +70,22 @@ software manifest.
 
 ## Current scope
 
-The initial dependency set contains only the API transport and structured-config
-building blocks. Triton, TileLang, CuTe DSL, CUDA toolchains, and profiler
-dependencies will be installed in target-specific GPU images after oracle
-readiness checks, rather than being coupled to the local controller environment.
+The default dependency set contains only the API transport and structured-config
+building blocks. The optional `gpu` dependency set freezes Triton, TileLang,
+CuTe DSL, and the CUDA Python stack in one validated A100 environment. The
+controller remains usable without those packages; separate target environments
+will be introduced only if a reproducible ABI or runtime conflict requires them.
 
 P0.1 provider conformance is implemented as a strict, single-attempt boundary.
 See `docs/p0.1-provider-conformance.md`. Controlled probes require exact model IDs,
 resolved credentials, and an explicit `--live` acknowledgement.
+
+The GPU-independent skeleton for the single-turn KernelBench screen is also
+available. It uses a pinned external checkout and keeps generated kernels out of
+Git. See `docs/kernelbench-naive-screen.md` and start with:
+
+```bash
+uv run abstrak-kernelbench validate \
+  --study configs/studies/kernelbench-naive-smoke.yaml \
+  --kernelbench-root /path/to/KernelBench
+```

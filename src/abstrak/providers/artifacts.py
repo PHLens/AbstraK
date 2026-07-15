@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -40,7 +40,7 @@ class ProviderArtifactStore:
         *,
         secrets: tuple[str, ...] = (),
     ) -> ProviderArtifactStore:
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
         run_id = uuid4().hex[:12]
         name = f"{timestamp}-{provider_id}-{model_id}-{run_id}"
         root_path = Path(root)

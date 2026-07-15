@@ -2,13 +2,23 @@
 
 ## Goal
 
-在不预设 Agent-aware target selection 必然有效的前提下，完成一个可复现的 Gate R pilot：建立三种 target stacks、两类 workload、A100/RTX 4090、多个 Agent 与 anytime resource checkpoints 上的 oracle matrix，验证是否存在稳定、可预测且具有实际成本意义的 Agent–target-stack crossover，并据此做出继续建设 progressive policy 或停止的 Go/No-Go 决策。
+在不预设 Agent-aware target selection 必然有效的前提下，完成一个可复现的 Gate R pilot：建立三种 target stacks、两类 workload、A100/RTX 4090、多个 Agent 与 anytime resource checkpoints 上的 oracle matrix，依次判断 target selection 是否必要、Agent information 是否在 workload/hardware context 之外提供增量价值，以及这种差异能否被低成本预测和利用。
+
+## Research Decision Chain
+
+Gate R 使用同一套 frozen matrix，按以下顺序解释证据；这是分析依赖，不是三套互不相干的实验：
+
+1. **R.1 Target-selection necessity:** 最强的 fixed-target baseline 是否仍在 held-out semantic members 上显著落后于 context-conditioned cell oracle？这一步只判断“是否需要选择”，不预设 Agent 是正确的选择机制。
+2. **R.2 Agent incremental value:** 固定 workload/hardware 后，Agent-conditioned oracle 或 selector 是否优于 workload/hardware-only selector？这一步判断 Agent identity/profile 是否提供额外决策信息。
+3. **R.3 Low-cost predict-and-exploit:** behavioral probes/profile 能否在计入 calibration、错误探索和运行开销后，优于 fixed/rules/top-2/parallel baselines 并接近 oracle？这一步判断差异是否值得工程化利用。
+
+分支结论必须保留：R.1 不通过则收缩为 fixed target；只有 global fixed 失败而 per-Agent fixed 足够时使用 offline per-Agent default；R.1 通过但 R.2 不通过时使用 workload/hardware deterministic selector；R.1/R.2 通过但 R.3 不通过时使用 additive rule、top-2 或 parallel exploration；只有三层均通过才批准 Gate P progressive policy。
 
 ## Current Phase
 
 **Phase 1: Pilot Contract Freeze and Manifest Foundation** (`in_progress`)
 
-当前只编写和审查 pilot 计划。下一次实施从 Phase 1 的 manifest schema 与 protocol freeze 开始。
+实施已从一个刻意弱化的 pre-Gate R `naive interaction screen` 开始：先用 KernelBench 固定 zero-shot prompt 检查 DeepSeek Flash/Pro 在 Triton、TileLang、CuTeDSL 上是否存在可观察能力差异。该 screen 只用于基础设施 bring-up 和寻找 informative variance，不替代 Phase 1 的正式 manifest、worker isolation、oracle 与 R.1/R.2/R.3 contract。
 
 ## Completed Preconditions
 
@@ -18,6 +28,16 @@
 - [x] 真实验证 DeepSeek V4 Flash/Pro endpoint；短请求的 provider token 与可见输入基本一致。
 - [x] 决定初期使用 DeepSeek API，OpenAI 后续按需要加入。
 - [x] 决定 pilot 不以固定 checkpoint/model ID 作为启动门槛；所有服务别名必须记录请求 ID、返回 ID、时间、provider、配置 hash 和重复 conformance 结果。
+- [x] 完成 GPU-independent KernelBench naive screen 骨架、6-cell smoke 与 24-cell screen manifests；真实 API 生成和 GPU 评价尚未运行。
+- [x] 将 AbstraK、`uv`、Ruff 与 pinned KernelBench 统一固定到 CPython `3.10.*`，避免 controller/worker 双 Python 运行时。
+
+## Naive Interaction Screen
+
+- **Question:** 在没有 system prompt、examples、memory、workflow、repair loop 或 hardware hint 时，两个 DeepSeek profiles 是否在不同 DSL target 上表现出不同的 correctness/performance frontier？
+- **Frozen matrix:** Flash/Pro × Triton/TileLang/CuTeDSL；smoke 使用一个 square-GEMM task 共 6 cells，screen 使用 GEMM、batched GEMM、LayerNorm 和 fused GEMM 共 24 cells；每 cell 单请求、单候选、FP16。
+- **Metrics:** compile rate、correctness rate、relative-to-PyTorch performance ratio、`fast_1`、`fast_2` 和 performance coverage。
+- **Interpretation:** 单 replicate negative result 不能证明 Agent–target equivalence，也不能直接否定 R.1/R.2；floor、ceiling、same-family Agent pair 或 backend maturity 均可能使结果不具信息量。
+- **Implementation status:** controller、pinned prompt/task adapter、private sealed artifacts、serial subprocess evaluator、checksum verification、summary 和 offline tests 已完成；真实 endpoint 与 GPU integration pending。
 
 ## Pilot Boundary
 
@@ -27,7 +47,7 @@
 - 三个候选 transformation layers：Triton、TileLang、CuTeDSL。
 - 两个 workload strata：memory/data-movement dominated family 与 low-precision GEMM family。
 - 两个 NVIDIA hardware strata：A100 (`sm80`) 与 RTX 4090 (`sm89`)。
-- DeepSeek V4 Flash/Pro 用于 infrastructure bring-up；正式 P1 使用一个 DeepSeek tier 加一个 GLM/Qwen external family，P2 再加入第三 capability tier。
+- DeepSeek V4 Flash/Pro 用于 infrastructure bring-up；正式 P1/P2a 使用一个 DeepSeek tier 加一个 GLM/Qwen external family，可选 P2b 再加入第三 capability tier。
 - 正确性、robustness、integration、性能、tokens、turns、compile/profile runs、GPU time、wall time 与 human intervention 的分项记录。
 - Representation oracle、budget-matched per-Agent target oracle 和 production oracle `B*` 的严格分离。
 - Gate R 所需 fixed/rule/Compiler-library-selector/feature-only/model-ID/profile/top-2/successive-halving/parallel/oracle baselines。
@@ -36,7 +56,7 @@
 
 - OpenAI 官方 API、缓存费用和货币化 API 成本作为可选扩展，不阻塞 pilot。
 - 固定模型 snapshot 作为 paper-scale reproducibility 加固项，不阻塞 insight-seeking pilot。
-- Progressive probe/continue/switch policy 仅在 Gate R 通过后实现。
+- Progressive probe/continue/switch policy 仅在 R.1–R.3 均通过并创建新的 Gate P study 后实现。
 - MoE、dynamic shape/ragged workload、multi-GPU、跨 vendor hardware 和新 backend onboarding。
 - 新 Semantic IR、通用 dialect 或 Compiler extension；只有重复 failure evidence 触发 Gate C 后才考虑。
 - 人类参与者实验与长期维护成本研究。
@@ -51,7 +71,7 @@ Workloads: 2 semantically distinct, lineage-isolated RMSNorm-family members
            2 semantically distinct, lineage-isolated W4A8 family members
 Hardware:  A100 (sm80) | RTX 4090 (sm89)
 Agents P1: one DeepSeek tier | one GLM/Qwen external family
-Agent P2:  one additional capability tier, initially DeepSeek V4 Pro
+Agent P2b: one optional additional capability tier, initially DeepSeek V4 Pro
 Replicates: 2 independent Agent runs per Agent–task–target–hardware cell
 Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 ```
@@ -86,6 +106,19 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - Tokens、GPU time、compile/profile runs 和其他资源继续单独报告 Pareto frontier，不用任意加权和覆盖 primary decision rule。
 - Actionable crossover 只在 matched semantic members 经 replicate aggregation 后出现 stable qualification change，或 stable-qualified winner 的 primary cost gap 超过 utility margin 时成立。
 
+### R.1 Target-Selection Necessity
+
+- Gate R 先比较 fixed targets 与 cell oracle，再分析 Agent-conditioned prediction；winner label 变化本身不足以证明 selection necessary。
+- 正式 R.1 默认只使用在 Agent 数据解盲前已证明所有 retained targets 均有 known qualified path 的 matched cells。缺 backend、primitive、intrinsic 或 lowering 的 cell 记为 deterministic capability-filter case，不计作 adaptive-selection evidence。
+- `Fixed-Global-Cal` 只用 calibration/development tasks 选择一个 target，冻结后用于所有 Agents、tasks 和 hardware；`Fixed-Agent-Cal` 同样只用 calibration data 为每个 Agent 冻结一个默认 target。
+- `Fixed-Global-Hindsight` 在全部 held-out cells 上事后选择最优的单一 target，是任何 global fixed policy 的乐观上界；`Fixed-Agent-Hindsight` 为每个 Agent 事后选择一个跨 workload/hardware 固定的 target，是判断 task/hardware-local selection 必要性的最强 fixed control。二者先最大化 stable qualification coverage，再在 coverage equivalence band 内最小化 median serial wall-clock 和 worst-stratum regret；只用于评价，不是可部署 policy。
+- 所有 fixed baselines 与 cell oracle 使用相同 qualification-first rule、censoring、replicate aggregation、tie bands 和完全相同的预注册 trajectories；不得为 fixed baseline 补跑、挑 seed 或改用便利的加权分数。
+- Headline 分别报告 oracle/fixed qualification coverage、actionable opportunity rate，以及双方 stable-qualified 时的 serial wall-clock-to-qualified regret `(C_fixed - C_oracle) / C_oracle`。Actionable opportunity 指 fixed 未 stable-qualify 而 oracle stable-qualify，或双方 stable-qualify 但 cost gap 超过 `delta_C`；同时保留完整 paired cell results、winner diversity、tie/unstable/unsupported rate 和 leave-one-semantic-member-out sensitivity。
+- `Portfolio-Necessity Go`：`Fixed-Global-Hindsight` 相对 cell oracle 的 qualification deficit 达到预注册 `delta_Q`，或 conditional cost regret 达到 `delta_C`，且证据由至少两个 lineage-isolated semantic members、至少两个 non-tied target winners 支撑并超过 timing/utility margin。
+- `Adaptive-Necessity Go`：上述条件相对更强的 `Fixed-Agent-Hindsight` 仍成立。Workload 与 hardware matched contrasts 分别标记为 `R.1-W` 和 `R.1-H`；只通过一项时必须收缩 claim scope，不能声称两者均得到验证。
+- 若 calibration-selected fixed 落后而对应 hindsight fixed 落入 oracle equivalence band，结论是 fixed-target estimation 或 distribution-shift 问题，不是 instance-local selection necessity。
+- 若 hindsight fixed 在 qualification 与 cost 上均落入 oracle equivalence band，或差异只来自单一 semantic member、unsupported target、tie 或 timing noise，则 R.1 No-Go。
+
 ### Replicate Aggregation and Target Oracle
 
 - Replicate IDs 不跨 targets 配对，也不构造“同 seed”假设；mutable service API 的两次 sampling 没有共同随机变量。
@@ -114,7 +147,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 
 ### Phase 1: Pilot Contract Freeze and Manifest Foundation
 
-**Objective:** 在运行任何 Kernel Agent 之前冻结实验单位、资源向量、版本边界、split 和 Go/No-Go 逻辑。
+**Objective:** 在运行任何 Kernel Agent 之前冻结实验单位、资源向量、版本边界、split，以及 R.1/R.2/R.3 各自的 comparator、margin 和分支结论。
 
 #### Tasks
 
@@ -128,6 +161,8 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - [ ] 冻结每个 family 至少两个真正不同的 semantic members 及 derivation graph；建立 source-lineage registry，禁止同源实现跨 calibration/holdout。
 - [ ] 定义 semantic-family hierarchy，并对 calibration/holdout 与 oracle/docs/examples 做 exact hash、token/AST near-duplicate 和人工语义 overlap audit；pretraining contamination 只记录风险，不伪称可完全排除。
 - [ ] 冻结 primary decision rule、secondary caps、tie rule、censoring、missing-cell 和 infrastructure-reschedule semantics。
+- [ ] 冻结递进 baseline ladder：global/per-Agent fixed calibration baselines、global/per-Agent hindsight fixed bounds、workload/hardware-only selector、Agent-identity selector、behavioral-profile selector、top-2/parallel baselines和 cell oracle。
+- [ ] 分别冻结 R.1 的 `delta_Q/delta_C` 与 semantic-member support rule、R.2 的 context-only incremental-value margin、R.3 的 calibration break-even 和 net-utility margin；禁止用后一层的成功掩盖前一层失败。
 - [ ] 定义 minimal `worker-job.v1/result.v1`、target-adapter interface、common failure taxonomy 和 qualification result contract，供 Phase 2 直接实现。
 - [ ] 设计新的 content-addressed `artifact-bundle.v1`：source tree/patch、logs、binaries、nested worker artifacts、hash chain、atomic incomplete/terminal state 和 checksum；不扩张 provider-specific store。
 - [ ] 定义 generated-code worker isolation：network/filesystem/process boundaries、GPU assignment、resource controls、timeout/cancel、health check、reset/quarantine、cleanup 和 idempotent job ID。
@@ -140,7 +175,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 
 - `configs/{hardware,workers,targets,tasks,agents,budgets,studies}/` 下的 schema-compatible examples 与 frozen pilot manifests。
 - Manifest cross-reference validator、stable/content hash，以及 duplicate ID、cycle、missing reference 和 hash mismatch negative tests。
-- `pilot-protocol.v1`：matrix、replicates、split、resource vector、decision rule、thresholds、baseline semantics、model alias policy 与 allowed feedback。
+- `pilot-protocol.v1`：matrix、replicates、split、resource vector、R.1/R.2/R.3 独立 result fields、decision rule、thresholds、baseline semantics、model alias policy 与 allowed feedback。
 - A100/4090 worker inventory artifacts 和 target support audit。
 - `worker-job/result.v1`、minimal adapter/failure contract、`artifact-bundle.v1` 和 sandbox threat model。
 
@@ -267,7 +302,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 
 ### Phase 5: Calibration, Budget Dry Run, and P1 Freeze
 
-**Objective:** 用与 holdout 无 lineage 关系的少量 probes 建立可审计 capability profile，并在看到 crossover 结果前冻结预算和分析代码。
+**Objective:** 用与 holdout 无 lineage 关系的少量 probes 预注册 R.3 的候选预测机制，并在看到 R.1/R.2 结果前冻结预算、baseline ladder 和分析代码；不预设前两层一定成立。
 
 #### Tasks
 
@@ -279,7 +314,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - [ ] 冻结 target-specific documentation packs、非解答式 examples、prompt template、tools、retrieval-off policy 和 context budget。
 - [ ] 实现简单可审计 profile：预注册 prior/partial pooling 的 Beta-Binomial 或 logistic model，加 censored cost estimator；定义 prediction instance、leave-one-semantic-member-out validation 和 minimum sample size。
 - [ ] 实现 workload+hardware feature-only、model identity metadata 和 static capability rules，作为 profile 增量价值的对照。
-- [ ] 在 P1 前冻结全部 baseline policy：fixed、static rules、Compiler/library selector、feature-only、model-ID、profile one-shot、top-2、successive halving、idealized parallel 和 oracle。
+- [ ] 在 P1 前按信息量递进冻结全部 baseline policy：global fixed、per-Agent fixed default、workload/hardware-only rules/features、加 Agent identity、加 behavioral profile、top-2、successive halving、idealized parallel 和 oracle；每一级只与其直接前级做增量比较。
 - [ ] 明确哪些 baseline 从独立 event ledger 做无泄漏 replay，哪些需要 fresh runs；idealized equal-deadline parallel 以隔离 trajectories 的最大完成时间作为 counterfactual lower bound，同时报告资源总和，不声称实测并发 latency。
 - [ ] 冻结 blocked-randomized execution schedule：按 semantic task/hardware/time block 分层，交错 target/Agent/replicate；final GPU timing 串行执行并隔离 compile/autotune cache、固定 concurrency/thermal policy。
 - [ ] 冻结 transient infrastructure policy：未提交 provider request 或 worker preflight failure 可按相同 replicate ID 重调度；可能已计费/已生成 action 的失败进入 ledger，不静默 retry。
@@ -305,9 +340,9 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 
 **Status:** `pending`
 
-### Phase 6: P1 Crossover Screening on the First Hardware
+### Phase 6: P1 Necessity Screening on the First Hardware
 
-**Objective:** 以最小 matched matrix 判断是否存在超过噪声的 target frontier 差异；无信号则尽早停止。
+**Objective:** 在 A100 上先筛查 `R.1-W` target-selection necessity，并对 R.2 Agent incremental value 做 provisional screen。A100 无 crossover 不能单独否定尚未测量的 `R.1-H`。
 
 **P1 matrix:**
 
@@ -330,86 +365,85 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - [ ] 保存所有 success、failure、timeout、abstention 和 budget exhaustion artifacts。
 - [ ] 每个 execution/time block 前后运行 provider sentinel conformance，并记录 worker thermal/clock/cache fingerprint。
 - [ ] 所有三个 target 完成后，才按 frozen replicate aggregation 构造每个 Agent/semantic-task/hardware/checkpoint cell 的 ex-post target oracle 与 tie/ambiguous label。
-- [ ] 以 semantic task 为 cluster，计算 qualification frontier、replicate stability、utility gap、timing-noise sensitivity、exploration cost share 和初步 Agent-conditioned crossover。
-- [ ] 执行预注册 early-stop：完全无 target frontier 差异或全部 target 均不可达时直接 No-Go，不扩展 P2。
+- [ ] 在相同 cells 上重放 `Fixed-Global-Cal`、`Fixed-Agent-Cal`，构造 global/per-Agent hindsight fixed bounds，并计算 qualification deficit、actionable opportunity 和 conditional cost regret。
+- [ ] 固定 Agent 比较两个 workload families，报告 `R.1-W`；固定 workload/hardware 比较两个 Agents，报告 provisional R.2。两者都以 semantic member 为 cluster，不把 replicate 或 shape 当作支持计数。
+- [ ] 执行预注册 early-stop：只有 targets 全部不可达、oracle/qualifier 无效，或 pre-Agent support audit 已证明矩阵无法形成 matched comparison 时才停止。A100 上没有 ranking reversal 不得单独触发全局 R.1 No-Go。
 - [ ] 检查结果是否由 target-specific examples、compile cache、并发、服务 alias 变化或单一 shape 驱动。
 
 #### Deliverables
 
 - 48 条 sealed high-budget trajectories 与对应 anytime checkpoints。
-- P1 oracle/crossover matrix、failure attribution 和 resource ledger。
-- P1 early-stop report：continue、repair-and-repeat-as-new-study 或 No-Go。
+- P1 fixed-vs-oracle necessity report、provisional Agent-increment report、failure attribution 和 resource ledger。
+- P1 decision：continue to mandatory second-hardware match、repair-and-repeat-as-new-study，或 infrastructure/oracle No-Go。
 
 #### Exit Criteria
 
 - [ ] 每个预注册 P1 replicate 都有 terminal artifact，不删除失败样本。
 - [ ] Oracle winner 只由独立 target runs 和独立 timing reruns构造，未进入 profile 或 prompt。
-- [ ] 至少存在超过 timing noise/utility margin、且不是单一 task/replicate outlier 的 target frontier signal才进入 P2。
+- [ ] Fixed baselines 与 oracle 的比较使用完全相同的 cells、预算和 replicate aggregation，并输出 ties、unstable 与 unsupported 分母。
+- [ ] 第二 hardware 的 retained targets 有 matched known qualified paths 时，不因 A100 negative result 跳过 P2a。
 - [ ] 若信号只来自缺失 backend、unequal assets 或 evaluator bug，修复后必须使用新 study version 重跑。
 
 **Status:** `pending`
 
-### Phase 7: P2 Confirmation, Strong Baselines, and Gate R Decision
+### Phase 7: P2 Matched Confirmation and Layered Gate R Decision
 
-**Objective:** 扩展到第二 hardware 和第三 capability tier，运行强 portfolio baselines，并作出是否建设 progressive realization 的最终 pilot 决策。
+**Objective:** 先补齐第二 hardware，以 R.1 → R.2 → R.3 的顺序判断 selection necessity、Agent incremental value 和 low-cost exploitability；第三 Agent 只作为 capability trend/external-validity 扩展。
 
-**Full matrix after P2:**
+**Mandatory matrix after P2a:**
 
 ```text
 3 targets
-× 3 Agent/model capability tiers
+× 2 cross-family Agents
 × 2 workload families
 × 2 lineage-distinct semantic packs per family
 × 2 hardware
 × 2 independent Agent replicates
-= 144 high-budget trajectories + 144 nested anytime checkpoints
+= 96 high-budget trajectories + 96 nested anytime checkpoints
 ```
+
+**Optional P2b:** 增加第三个 Agent 在两个 hardware 上的 48 条 trajectories，总数扩展至 144；它增强 capability trend，不是识别 R.1/R.2 的最低条件。
 
 #### Tasks
 
-- [ ] 为第三个 capability tier 完成 P0.1 conformance、agent manifest、calibration 和 frozen profile；P1 已包含 cross-family pair，第三 tier 可优先使用 DeepSeek V4 Pro 或剩余 GLM/Qwen endpoint。
-- [ ] 补齐 RTX 4090 上所有 Agent–semantic-task–target–replicate cells，并补齐第三 Agent 在 A100 上的 cells。
+- [ ] 先补齐 P1 两个 Agents 在 RTX 4090 上所有 matched Agent–semantic-task–target–replicate cells，形成不可跳过的 96-trajectory P2a matrix。
 - [ ] 保留全部四个 workload–hardware blocks，包括没有 crossover 的 negative blocks。
-- [ ] 运行 development-selected fixed target、static rules、feature-only router、model-ID router 和 capability-profile one-shot router。
-- [ ] 按 Phase 5 frozen semantics 运行或 replay capability-filtered top-2 race、successive halving、Compiler/library selector、equal-resource all-target 和 idealized equal-deadline all-target lower bound。
-- [ ] 构造 budget-matched per-Agent target oracle，只用于 ex-post regret 和 headroom 评价。
-- [ ] 报告 qualification、relative-to-`B*`、worst-shape regression、actionable crossover、Brier/ECE、censored cost error 和分项 cost-to-qualified。
-- [ ] 做 leave-one-block-out、timing/shape rerun、target asset audit，以及 hardware/Agent/budget 分轴分析。
-- [ ] 以 semantic member 为 cluster 做 leave-one-member-out；hardware 作为 repeated measure，四个 blocks 只用于 pragmatic screen。
-- [ ] 计算 calibration cold-start、break-even family size、failed exploration share 和 top-2/parallel 增量成本。
-- [ ] 根据冻结条件输出 Gate R Go/No-Go；Gate R Go 只批准下一阶段 progressive policy，不等于论文 claim 已成立。
+- [ ] 按 R.1 先比较 calibration-selected fixed、global/per-Agent hindsight fixed 与 cell oracle；分别报告 `R.1-W` workload matched contrast 和 `R.1-H` 同一 semantic member 跨 A100/4090 contrast。
+- [ ] 按 R.2 比较 workload/hardware-only rules/features 与加入 Agent identity/profile 的 selector，并检查固定 context 时是否存在超过 margin 的 Agent-dependent target reversal。
+- [ ] 只有 R.1/R.2 显示 headroom 后，才将 behavioral profile 作为 R.3 候选机制；运行或无泄漏 replay top-2、successive halving、Compiler/library selector、equal-resource all-target 和 idealized equal-deadline all-target lower bound。
+- [ ] 若需要验证 capability trend，再为第三 Agent 完成 P0.1 conformance、manifest、calibration 和两个 hardware 的可选 P2b cells；不得只因增加样本量而改写已冻结 gate。
+- [ ] 报告 qualification、relative-to-`B*`、worst-shape regression、actionable opportunity、Brier/ECE、censored cost error、分项 cost-to-qualified 和 exploration cost share。
+- [ ] 做 leave-one-semantic-member-out、timing/shape rerun、target asset audit，以及 workload/hardware/Agent/budget 分轴分析；hardware 作为 repeated measure。
 
-#### Gate R Go Conditions
+#### Layered Gate R Conditions
 
-- [ ] 四个 workload–hardware screening blocks 中至少两个出现由多个独立 semantic members 支撑的 actionable crossover，且不是 unsupported target 的静态过滤结果；replicates 只验证 member 内稳定性，不增加支持计数。
-- [ ] 固定 Agent 时存在 workload/hardware frontier change；固定 workload/hardware 时至少一个 matched set 随 Agent 改变。
-- [ ] Behavioral profile 相对 workload+hardware feature-only/rules 改善 qualification/cost prediction，超过预注册最小效应量。
-- [ ] Calibration 在预注册 family size 内 break even。
-- [ ] Fixed/rules/top-2/parallel 未共同支配复杂 policy 的可行空间。
-- [ ] Target exploration 和失败尝试占 cost-to-qualified 的比例足以提供可测 headroom。
+- [ ] **R.1 Portfolio necessity:** global hindsight fixed 相对 cell oracle 达到 `delta_Q` 或 `delta_C`，由至少两个独立 semantic members 和至少两个 non-tied winners 支撑，且非 unsupported target、asset imbalance 或 timing noise。
+- [ ] **R.1 Adaptive necessity:** 更强的 per-Agent hindsight fixed 仍达到相同 practical threshold。`R.1-W` 与 `R.1-H` 分别判定；只有一项通过时收缩 workload-only 或 hardware-only claim。
+- [ ] **R.2 Agent incremental value:** 固定 workload/hardware 时至少两个独立 semantic contexts 出现稳定 Agent-dependent frontier change，并且 Agent-conditioned selector 相对 workload/hardware-only selector 超过预注册 qualification/cost margin。
+- [ ] **R.3 Low-cost exploitability:** behavioral profile 相对 Agent identity 与 context-only baselines 提供额外预测价值，calibration 在预注册 family size 内 break even，且 top-2/parallel 未以更低总成本达到等价结果。
+- [ ] **Progressive-policy Go:** R.1 adaptive necessity、R.2 和 R.3 均通过，错误 target exploration 占 cost-to-qualified 的比例提供可测优化空间；该结论只批准新的 Gate P study，不等于 paper-scale generality 已成立。
 
-#### Gate R No-Go Triggers
+#### Branch Outcomes
 
-- [ ] Winner 几乎固定，翻转只来自 timing noise。
-- [ ] Agent profile 在 workload+hardware rules 外没有额外决策价值。
-- [ ] Top-2 race 或 parallel all-target 的增量成本很低。
-- [ ] 审计或平衡 primitives、examples、tools 和预算后 target-stack crossover 消失，无法支撑 target-selection headroom。
-- [ ] 所有 Agent 在全部 targets 上均无法达到合理门槛，主要瓶颈是 generation capability。
-- [ ] 主要失败来自缺失 backend/primitive，无法归因于 routing。
-- [ ] Alias/version 波动使 ranking 剧烈变化，且重复 conformance/少量 probes 无法恢复。
+- [ ] R.1 global necessity 不通过：采用 fixed target，停止 adaptive-selection claim。
+- [ ] 只有 global necessity 通过、adaptive necessity 不通过：采用 offline per-Agent default，不研究 task-local router。
+- [ ] R.1 adaptive necessity 通过但 R.2 不通过：采用 workload/hardware deterministic selector，删除 Agent-aware novelty claim。
+- [ ] R.1/R.2 通过但 R.3 不通过：保留 characterization 结果，采用 additive rule、top-2、successive halving 或 parallel exploration。
+- [ ] 所有 targets 均无法 qualification、主要差异来自 backend/primitive 缺失，或 alias drift 无法控制：转为 Kernel generation、capability extension 或 reproducibility problem，不计作 routing result。
 
 #### Deliverables
 
-- Full 144-trajectory dataset、nested anytime checkpoints 和 sealed result matrix。
-- Fixed/rule/profile/top-2/successive-halving/parallel/oracle baseline report。
-- Crossover、calibration、failure attribution、resource frontier 和 robustness analysis。
-- `gate-r-decision.v1`：Go/No-Go、触发阈值、被排除机制、剩余风险和下一阶段边界。
+- Mandatory 96-trajectory dataset、nested anytime checkpoints 和 sealed result matrix；若执行 P2b，再附加第三 Agent 的 48 条 trajectories。
+- R.1 fixed-vs-oracle、R.2 context-vs-Agent、R.3 profile-vs-exploration 三份递进报告。
+- Qualification/cost regret、calibration、failure attribution、resource frontier 和 robustness analysis。
+- `gate-r-decision.v1`：每层 pass/fail、触发阈值、scope shrink、被排除机制、剩余风险和下一阶段边界。
 
 #### Exit Criteria
 
 - [ ] 所有 retained cells 和 baselines 已按 frozen protocol 完成或保留为 censored failure。
 - [ ] Gate decision 可从 immutable artifacts 与 frozen analysis code 重建。
-- [ ] Go 时创建新的 Gate P plan；No-Go 时收缩为 fixed/rule/top-2、Kernel generation 或 Compiler/backend project。
+- [ ] 96 条 mandatory matrix 完成后才对 `R.1-H` 与整体 Gate R 作结论；第三 Agent 是否运行由预注册 external-validity rule 决定。
+- [ ] 按 R.1/R.2/R.3 分支创建 Gate P 或收缩为 fixed/per-Agent default/context rule/top-2、Kernel generation 或 Compiler/backend project。
 - [ ] 在 Gate R 决策前不实现完整 progressive switching policy。
 
 **Status:** `pending`
@@ -424,7 +458,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - Weeks 7–10：Phase 4 可在 Phase 2 contracts 稳定后并行开发 Agent runtime，但不得采集正式 trajectories。
 - Weeks 9–11：Phase 5 cross-family conformance、calibration、budget dry run、baseline freeze 和 randomized schedule。
 - Week 12：Phase 6 P1 的 48 条 trajectories、sealed qualification 和 early-stop decision。
-- Weeks 13–14：Phase 7 P2 扩展至 144 条总 trajectories。
+- Weeks 13–14：Phase 7 P2a 镜像第二 hardware，扩展至 mandatory 96 条总 trajectories；仅在预注册条件触发时运行第三 Agent 的可选 P2b，扩展至 144 条。
 - Week 15：Frozen baselines/replays、independent reruns、leakage/asset/robustness audit。
 - Week 16：Gate R decision、artifact freeze 和下一阶段边界。
 
@@ -439,7 +473,7 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 5. Qualification threshold、timing noise margin 和 actionable utility margin 的具体数值是什么？
 6. `B_L/B_H` 在各资源轴上的 cap 经 baseline dry run 后应如何设置？
 7. P1 external family 选择 GLM 还是 Qwen，P2 第三 capability tier 选择哪个 endpoint，怎样保证相同 orchestration 与可比 tool use？
-8. Calibration profile 的最小效应量和 break-even family size 如何预注册？
+8. R.1 的 `delta_Q/delta_C`、R.2 的 Agent incremental margin、R.3 的 profile 最小效应量和 break-even family size 如何预注册？
 
 ## Decisions Made
 
@@ -450,11 +484,11 @@ Budgets:   B_L anytime checkpoint nested inside one B_H-declared trajectory
 - Candidate targets 为 Triton、TileLang、CuTeDSL；CuTeDSL 只能在正式 Agent 运行前替换。
 - Candidate workloads 为 RMSNorm-family 与 W4A8 fused-dequant GEMM；dense GEMM fallback 只验证 harness。
 - A100/RTX 4090 构成首轮 hardware strata；不把缺失 backend 写成跨硬件 routing 失败。
-- Pilot 使用每 family 两个 lineage-distinct semantic packs、每 cell 两个 Agent replicates；P1/P2 总 trajectories 为 48/144。
+- Pilot 使用每 family 两个 lineage-distinct semantic packs、每 cell 两个 Agent replicates；P1 为 48，双硬件 mandatory P2a 总数为 96，第三 Agent 可选 P2b 后总数为 144。
 - `B_L` 是 `B_H` anytime policy 的观察 checkpoint，不代表明确被告知低预算的 Agent。
 - Qualification-first、serial wall-clock primary cost、resource caps 和 Pareto reporting共同定义 target oracle；不使用未定义的多维 `argmin`。
 - Primary claim 是 Agent–target-stack fit，不把 stack difference 直接因果归为 representation。
-- 先完成 oracle/qualification，再运行 Agent；先通过 Gate R，再实现 progressive policy。
+- 先完成 oracle/qualification，再运行 Agent；依次通过 R.1 selection necessity、R.2 Agent incremental value 和 R.3 low-cost exploitability 后，才为 progressive policy 建立新的 Gate P study。
 
 ## Errors Encountered
 

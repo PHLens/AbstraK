@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -154,9 +154,10 @@ class MissingEnvironmentError(ValueError):
         self.variables = variables
 
 
-def load_manifest[ManifestT: ManifestModel](
-    path: str | Path, model_type: type[ManifestT]
-) -> ManifestT:
+ManifestT = TypeVar("ManifestT", bound=ManifestModel)
+
+
+def load_manifest(path: str | Path, model_type: type[ManifestT]) -> ManifestT:
     manifest_path = Path(path)
     try:
         payload = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))

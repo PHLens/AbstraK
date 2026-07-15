@@ -9,7 +9,7 @@ import platform
 import subprocess
 import time
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
@@ -317,12 +317,12 @@ class ProviderClient:
     def complete(self, request: LogicalRequest) -> NormalizedResponse:
         actual_request, sanitized_request = self._transport_requests(request)
         attempt_id = uuid4().hex
-        started_at = datetime.now(UTC)
+        started_at = datetime.now(timezone.utc)
         started = time.perf_counter()
         try:
             response = self.transport.completion(**actual_request)
         except Exception as error:
-            failed_at = datetime.now(UTC)
+            failed_at = datetime.now(timezone.utc)
             category, retryable = _error_category(error)
             status_code = getattr(error, "status_code", None)
             request_submitted = not isinstance(error, UnsafeTransportState)
@@ -366,7 +366,7 @@ class ProviderClient:
                 elapsed_ms=(time.perf_counter() - started) * 1000,
             )
         except MalformedProviderResponse as error:
-            failed_at = datetime.now(UTC)
+            failed_at = datetime.now(timezone.utc)
             record = NormalizedError(
                 request_id=request.request_id,
                 attempt_id=attempt_id,
@@ -465,7 +465,7 @@ class ProviderClient:
         if returned_model is None:
             warnings.append("provider did not report a model identifier")
 
-        finished_at = datetime.now(UTC)
+        finished_at = datetime.now(timezone.utc)
         provider_request_id = payload.get("id")
         if not provider_request_id:
             provider_request_id = allowed_headers.get("x-request-id") or allowed_headers.get(
