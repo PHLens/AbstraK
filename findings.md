@@ -238,7 +238,19 @@
 - `scripts/bootstrap-a100.sh` 校验 KernelBench commit、wheel archive hash、精确 package versions、driver 下界、SM80 设备和 Torch FP16 CUDA 运算，任一不符即 fail closed。
 - KernelBench 自带的 trusted add examples 在 Triton、TileLang 和 CuTe DSL 上均已 compile 且 correctness 通过，并完成 candidate/reference timing。这些只证明 toolchain 可用，不作为 Agent 性能结果。
 - Remote AbstraK test suite 为 68 passed，Ruff 通过。本轮没有 API 调用，也没有执行模型生成的代码。
-- 远端尚无 `/root/.abstrak/config.yaml`，因此 study profile validation 会正常 fail closed；这与 GPU/toolchain 可用性无关。worker 也未安装 Docker，故 hostile generated-code isolation 仍是正式 live generation 前的独立 exit gate。
+- Bring-up 时远端尚无 `/root/.abstrak/config.yaml`；live smoke 期间已以 mode `0600` 临时部署本地 config/auth，不纳入仓库或持久 artifacts。worker 仍未安装 Docker，故 hostile generated-code isolation 仍是正式 pilot 的独立 exit gate。
+
+## First Live Naive Interaction Smoke
+
+- Frozen study hash 为 `d09216ec7035707c803e8cde90540f68dee2ac506123fb72010b3c281e5b4341`，有效 run 为 `20260715T110357.954897Z-e3afdf778b`。矩阵是 DeepSeek V4 Flash/Pro × Triton/TileLang/CuTe × KernelBench Level 1 square GEMM，每 cell 一次请求。
+- 远端 worker 到 `api.deepseek.com` 的未认证 HTTP 请求也被 connection reset；failed run `20260715T110146.001822Z-c23e15442b` 的 6 个 provider errors 因此归为 infrastructure，不计入 Agent 结果。六次均已 `request_submitted=true`，所以保守记为 `possibly_charged`，没有在同一 run 中静默 retry。有效 run 由本地 controller 生成，经 SHA-256 校验的 archive handoff 到 A100 evaluator。
+- 六个 candidates 均生成且 finish reason 为 `stop`。每次 input 为 409 tokens，CuTe prompt 为 427；output 范围为 2,515–6,500 tokens。
+- Flash Triton 为 `0.620 ms`，PyTorch reference 为 `0.518 ms`，ratio `0.835x`；Pro Triton 为 `0.781 ms`，reference 为 `0.517 ms`，ratio `0.662x`。两者均 compile 且通过 5 次 correctness trials，但均未快于 reference。
+- 两个 TileLang candidates 均缺少 `@T.prim_func`。关闭 static check 的独立诊断确认 Flash 使用了不存在的 `tilelang.kernel`，Pro 尝试导入不存在的 `tilelang.kernel`。
+- 两个 CuTe candidates 均被 static checker 标记缺少 `cute::`/`cutlass::`。关闭 static check 后仍失败：Flash 使用 placeholder include/build path；Pro 的 extension 使用 C++14 编译当前 PyTorch headers，且 binding 缺少 declaration。因此不是单纯 static-check false positive。
+- Known-good Triton/TileLang/CuTe examples 在同一 worker 上已通过，所以这是 naive prompt 下的 Agent–target-stack familiarity/API floor，不是 backend unavailable。
+- 两个 profiles 都只有 Triton 达到 correctness，target ranking 没有反转；该 run 没有支持 R.2 Agent incremental value，也不能证明两个 Agents 等价。由于 2/3 targets 呈现 floor，直接扩展 24 cells 只会复制混杂因素。
+- 下一个 study version 应先消除 floor：冻结且平衡 target-specific API documentation/non-solution examples，或替换为模型可稳定表达的 target stacks；若要评价 R.2，还必须加入 GLM/Qwen external family。
 
 ---
 

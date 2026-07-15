@@ -160,7 +160,32 @@
 - 远端 `pytest` 通过 68 tests，Ruff 通过。
 - 未发起 provider API 请求，未执行任何模型生成 kernel。
 
-#### Remaining Gates
+#### Environment Boundaries
 
-- Remote study profile validation 需要本地化的 `~/.abstrak/config.yaml`/`auth.json`；不在仓库内复制或记录 secrets。
+- Live smoke 期间已以 mode `0600` 向当前容器临时部署 `~/.abstrak/config.yaml`/`auth.json`；secrets 不在仓库或持久 artifacts 中。
 - 正式执行模型生成代码前，仍需完成 worker isolation 与 hang/OOM quarantine gate；当前镜像无 Docker。
+
+### First Live 6-Cell Naive Smoke
+
+- **Status:** `complete_floor_detected_no_24_cell_expansion`
+- **Study/run:** study hash `d09216ec7035707c803e8cde90540f68dee2ac506123fb72010b3c281e5b4341`；run `20260715T110357.954897Z-e3afdf778b`。
+- **Execution exception:** 用户明确授权在当前 remote Docker 中执行 generated code；这只适用于 exploratory smoke，不改变正式 pilot 的 worker-isolation exit gate。
+
+#### Execution
+
+- Remote controller 到 DeepSeek official endpoint 的所有请求被 `[Errno 104] Connection reset by peer`；failed run `20260715T110146.001822Z-c23e15442b` 保留为 infrastructure artifact，不计入结果。六次均已标记 `request_submitted=true/possibly_charged`，没有在原 run 中 retry。
+- Local controller 在 pinned KernelBench commit 上完成 6/6 single-turn generations。Generation archive SHA-256 为 `917460b076210ae04f7e87b4feeb0c76d768c90aa46ea86ebf62a590f3913f3d`，远端校验后才解包。
+- A100 evaluator 重新验证每个 sealed generation bundle，完成 6/6 terminal evaluations 和 metrics summary，无 missing evaluations。
+
+#### Results
+
+- Flash×Triton：compile/correct，`0.620 ms` vs PyTorch `0.518 ms`，performance ratio `0.835x`。
+- Pro×Triton：compile/correct，`0.781 ms` vs PyTorch `0.517 ms`，performance ratio `0.662x`。
+- Flash/Pro×TileLang：均缺少当前 `@T.prim_func` API；关闭 static check 后仍因不存在的 `tilelang.kernel` 失败。
+- Flash/Pro×CuTe：均未通过 static check；关闭 static check 后仍因 placeholder path、C++ standard 和 binding declaration 错误失败。
+
+#### Decision
+
+- 两个 DeepSeek profiles 的 target ranking 相同，没有 Agent-dependent reversal；Flash 在唯一成功的 Triton cell 上快于 Pro，但这只是 within-target 差异。
+- TileLang/CuTe 的 4/4 failures 构成明显 floor effect。按预注册规则不扩展到 24-cell screen，先重新设计 target assets 或 target set。
+- 本结果证明 target selection 在当前设置下退化为 fixed Triton，不证明 R.2 没有研究价值；同 family、单 task、单 replicate 且两 targets floor，不具备 equivalence-test 条件。
