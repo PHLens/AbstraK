@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/activate-volume-tools.sh"
 ABSTRAK_ROOT="${ABSTRAK_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 VOLUME_ROOT="${ABSTRAK_VOLUME_ROOT:-$(dirname -- "$ABSTRAK_ROOT")}"
 KERNELBENCH_ROOT="${KERNELBENCH_ROOT:-$VOLUME_ROOT/KernelBench}"
@@ -13,9 +14,6 @@ EXPECTED_KERNELBENCH_COMMIT="423217d9fda91e0c2d67e4a43bf62f96f6d104f1"
 EXPECTED_WHEELHOUSE_SHA256="ae644076dd76cd3ed8e47931e1ca4bc044881e244024556a1cb4d05767520caf"
 
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$VOLUME_ROOT/.uv/python}"
-export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$VOLUME_ROOT/.gitconfig}"
-export PATH="$VOLUME_ROOT/tools/bin:$PATH"
-
 command -v uv >/dev/null || { echo "uv is required" >&2; exit 1; }
 command -v git >/dev/null || { echo "git is required in PATH" >&2; exit 1; }
 test -d "$ABSTRAK_ROOT/.git" || { echo "missing AbstraK checkout" >&2; exit 1; }

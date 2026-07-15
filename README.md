@@ -40,6 +40,7 @@ file.
 Run the stricter probe on a GPU worker:
 
 ```bash
+scripts/update-worker.sh
 scripts/bootstrap-a100.sh
 source scripts/activate-a100.sh
 abstrak-doctor --require-gpu
@@ -51,6 +52,8 @@ software manifest. The current A100 worker uses Python 3.10, PyTorch 2.13.0,
 and the CUDA 12.6 wheel index. Source, locks, wheels, and artifacts stay on the
 persistent volume; the GPU venv is rebuilt on container-local storage by
 `scripts/bootstrap-a100.sh` so imports and JIT compilation do not run over NFS.
+The persistent worker checkout uses the public HTTPS remote, so later container
+refreshes update with `scripts/update-worker.sh` instead of copying source files.
 
 ## Repository layout
 

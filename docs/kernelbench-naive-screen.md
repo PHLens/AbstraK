@@ -61,9 +61,10 @@ the CUDA 12.6 wheel index, TileLang, and CuTe DSL; PyTorch supplies its matching
 Triton version. The bootstrap stages the persistent wheelhouse archive into
 container-local storage and rebuilds `/tmp/abstrak-gpu-venv` offline. Source,
 the wheel archive, and run artifacts remain on the persistent volume. On the
-A100 worker, build and validate:
+A100 worker, update the persistent checkout, build, and validate:
 
 ```bash
+scripts/update-worker.sh
 scripts/bootstrap-a100.sh
 source scripts/activate-a100.sh
 
@@ -74,9 +75,10 @@ for target in triton tilelang cute; do
 done
 ```
 
-After a container refresh, rerun the bootstrap and activation commands. The
-offline rebuild uses the persistent wheel archive and does not contact package
-indexes.
+After a container refresh, rerun the update, bootstrap, and activation commands.
+The update uses the public HTTPS remote through the persistent Git helper bundle;
+the offline environment rebuild uses the persistent wheel archive and does not
+contact package indexes.
 
 Then run cells serially:
 
