@@ -3,6 +3,7 @@
 from abstrak.canary.contracts import (
     CaseResult,
     InputCaseSpec,
+    PublicTaskSpec,
     TargetStackSpec,
     TaskPackSpec,
     TimingSpec,
@@ -13,6 +14,7 @@ from abstrak.canary.contracts import (
 __all__ = [
     "CaseResult",
     "InputCaseSpec",
+    "PublicTaskSpec",
     "TargetStackSpec",
     "TaskPackSpec",
     "TimingSpec",

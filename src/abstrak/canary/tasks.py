@@ -53,12 +53,12 @@ _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
             dtype="fp16",
             reference_precision="fp32",
             input_shapes=((1024, 1024),),
-            parameters={
-                "rows": 1024,
-                "columns": 1024,
-                "scale": 0.5,
-                "output_dtype": "fp16",
-            },
+            parameters=(
+                ("rows", 1024),
+                ("columns", 1024),
+                ("scale", 0.5),
+                ("output_dtype", "fp16"),
+            ),
             atol=1e-2,
             rtol=1e-2,
             fallback_policy="forbid_framework_ops",

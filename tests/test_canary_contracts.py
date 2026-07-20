@@ -22,7 +22,7 @@ def _task() -> TaskPackSpec:
         source_sha256="1" * 64,
         dtype="fp16",
         input_shapes=((1024, 1024),),
-        parameters={"scale": 0.5},
+        parameters=(("scale", 0.5),),
         atol=1e-2,
         rtol=1e-2,
         fallback_policy="forbid_framework_ops",
@@ -61,6 +61,9 @@ def test_input_case_value_matches_kind() -> None:
     with pytest.raises(ValidationError, match="random cases cannot"):
         InputCaseSpec(id="random", kind="random", seed=1, value=0.0)
 
+    with pytest.raises(ValidationError):
+        InputCaseSpec(id="random", kind="random", seed="1")
+
 
 def test_task_rejects_duplicate_case_ids_across_splits() -> None:
     task = _task().model_dump()
@@ -88,6 +91,26 @@ def test_worker_job_hashes_are_stable_and_job_id_scoped() -> None:
     assert first.sha256 != second.sha256
 
 
+def test_task_parameters_are_immutable_and_public_view_hides_cases() -> None:
+    task = _task()
+    public_payload = task.public_view().model_dump(mode="json")
+
+    with pytest.raises(TypeError):
+        task.parameters[0] = ("scale", 1.0)
+    assert set(public_payload) == {
+        "id",
+        "dtype",
+        "reference_precision",
+        "input_shapes",
+        "parameters",
+        "init_args",
+        "atol",
+        "rtol",
+    }
+    assert "sealed" not in str(public_payload)
+    assert "seed" not in str(public_payload)
+
+
 def test_completed_result_requires_all_cases_to_pass() -> None:
     job = _job()
     passing = CaseResult(
@@ -113,6 +136,11 @@ def test_completed_result_requires_all_cases_to_pass() -> None:
     assert result.status == "completed"
     with pytest.raises(ValidationError, match="completed results require compiled"):
         WorkerResult.model_validate({**result.model_dump(), "correct": False})
+    assert result.verify_for_job(job) is result
+
+    other_job = job.model_copy(update={"job_id": "job-other"})
+    with pytest.raises(ValueError, match="does not match job"):
+        result.verify_for_job(other_job)
 
 
 def test_wrong_result_requires_one_failing_case() -> None:
@@ -138,6 +166,7 @@ def test_wrong_result_requires_one_failing_case() -> None:
     )
 
     assert result.correct is False
+    assert result.verify_for_job(job) is result
 
 
 def test_target_oracle_reference_must_be_complete() -> None:

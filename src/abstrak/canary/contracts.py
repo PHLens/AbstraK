@@ -19,7 +19,7 @@ ParameterValue = int | float | str | bool
 class CanaryModel(BaseModel):
     """Base class for values that enter hashed experiment artifacts."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 def _validate_relative_asset_path(value: str) -> str:
@@ -52,6 +52,19 @@ class InputCaseSpec(CanaryModel):
         return self
 
 
+class PublicTaskSpec(CanaryModel):
+    """The only task representation that may be injected into an Agent prompt."""
+
+    id: str = Field(pattern=IDENTIFIER_PATTERN)
+    dtype: Literal["fp16", "bf16", "fp32"]
+    reference_precision: Literal["fp32"] = "fp32"
+    input_shapes: tuple[tuple[int, ...], ...] = Field(min_length=1)
+    parameters: tuple[tuple[str, ParameterValue], ...] = ()
+    init_args: tuple[ParameterValue, ...] = ()
+    atol: float = Field(gt=0)
+    rtol: float = Field(gt=0)
+
+
 class TaskPackSpec(CanaryModel):
     """Frozen public task semantics plus private case partition references."""
 
@@ -62,7 +75,7 @@ class TaskPackSpec(CanaryModel):
     dtype: Literal["fp16", "bf16", "fp32"]
     reference_precision: Literal["fp32"] = "fp32"
     input_shapes: tuple[tuple[int, ...], ...] = Field(min_length=1)
-    parameters: dict[str, ParameterValue] = Field(default_factory=dict)
+    parameters: tuple[tuple[str, ParameterValue], ...] = ()
     init_args: tuple[ParameterValue, ...] = ()
     atol: float = Field(gt=0)
     rtol: float = Field(gt=0)
@@ -87,9 +100,12 @@ class TaskPackSpec(CanaryModel):
     @field_validator("parameters")
     @classmethod
     def parameters_are_finite(
-        cls, value: dict[str, ParameterValue]
-    ) -> dict[str, ParameterValue]:
-        if any(isinstance(item, float) and not math.isfinite(item) for item in value.values()):
+        cls, value: tuple[tuple[str, ParameterValue], ...]
+    ) -> tuple[tuple[str, ParameterValue], ...]:
+        names = [name for name, _ in value]
+        if len(names) != len(set(names)):
+            raise ValueError("parameter names must be unique")
+        if any(isinstance(item, float) and not math.isfinite(item) for _, item in value):
             raise ValueError("float parameters must be finite")
         return value
 
@@ -106,6 +122,24 @@ class TaskPackSpec(CanaryModel):
 
     def cases_by_id(self) -> dict[str, InputCaseSpec]:
         return {case.id: case for case in self.all_cases}
+
+    @property
+    def parameter_map(self) -> dict[str, ParameterValue]:
+        return dict(self.parameters)
+
+    def public_view(self) -> PublicTaskSpec:
+        """Return a whitelist-based prompt payload with no case or source metadata."""
+
+        return PublicTaskSpec(
+            id=self.id,
+            dtype=self.dtype,
+            reference_precision=self.reference_precision,
+            input_shapes=self.input_shapes,
+            parameters=self.parameters,
+            init_args=self.init_args,
+            atol=self.atol,
+            rtol=self.rtol,
+        )
 
 
 class TargetStackSpec(CanaryModel):
@@ -267,6 +301,13 @@ class WorkerResult(CanaryModel):
 
     @model_validator(mode="after")
     def terminal_status_is_consistent(self) -> WorkerResult:
+        case_ids = [case.case_id for case in self.cases]
+        if len(case_ids) != len(set(case_ids)):
+            raise ValueError("case result IDs must be unique")
+        if self.timing_cv is not None and not math.isfinite(self.timing_cv):
+            raise ValueError("timing_cv must be finite")
+        if bool(self.timing_ms) != (self.timing_cv is not None):
+            raise ValueError("timing samples and timing_cv must be supplied together")
         if self.status == "completed":
             if not self.compiled or not self.correct or not self.cases:
                 raise ValueError("completed results require compiled, correct case results")
@@ -295,4 +336,30 @@ class WorkerResult(CanaryModel):
                 raise ValueError("static_check_failed requires static_errors")
         if self.timing_ms and not self.correct:
             raise ValueError("only correct results may contain timing samples")
+        return self
+
+    def verify_for_job(self, job: WorkerJob) -> WorkerResult:
+        """Fail closed unless this terminal result belongs to the exact worker job."""
+
+        expected_links = (job.job_id, job.sha256, job.input_sha256, job.candidate_sha256)
+        actual_links = (
+            self.job_id,
+            self.job_sha256,
+            self.input_sha256,
+            self.candidate_sha256,
+        )
+        if actual_links != expected_links:
+            raise ValueError("worker result does not match job identity or content hashes")
+        result_case_ids = tuple(case.case_id for case in self.cases)
+        if self.status in {"completed", "wrong_result"}:
+            same_cases = set(result_case_ids) == set(job.case_ids)
+            if not same_cases or len(result_case_ids) != len(job.case_ids):
+                raise ValueError("terminal scientific result does not cover every requested case")
+        elif any(case_id not in job.case_ids for case_id in result_case_ids):
+            raise ValueError("worker result contains a case not requested by the job")
+        if job.timing is None and self.timing_ms:
+            raise ValueError("worker returned timing samples for a job without timing")
+        if job.timing is not None and self.status == "completed":
+            if len(self.timing_ms) != job.timing.trial_runs:
+                raise ValueError("worker timing sample count does not match the job")
         return self
