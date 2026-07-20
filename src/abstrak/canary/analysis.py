@@ -54,14 +54,14 @@ class TrajectoryMeasurement(CanaryModel):
     qualified_at_first: bool = False
     qualified_at_final: bool = False
     candidate_latency_ms: float | None = Field(default=None, gt=0)
-    baseline_latency_ms: float = Field(gt=0)
-    expert_latency_ms: float = Field(gt=0)
+    baseline_latency_ms: float | None = Field(default=None, gt=0)
+    expert_latency_ms: float | None = Field(default=None, gt=0)
     timing_cvs: tuple[float, ...] = Field(default=(), max_length=2)
     calls: int = Field(ge=0, le=4)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
     wall_seconds: float = Field(default=0.0, ge=0)
-    gpu_seconds: float = Field(default=0.0, ge=0)
+    gpu_seconds: float | None = Field(default=None, ge=0)
 
     @field_validator("timing_cvs")
     @classmethod
@@ -88,14 +88,11 @@ class TrajectoryMeasurement(CanaryModel):
         is_observed = self.terminal_status == "observed"
         if not is_observed and (self.qualified_at_first or self.qualified_at_final):
             raise ValueError("infrastructure failures cannot be marked qualified")
-        has_performance = self.candidate_latency_ms is not None or bool(self.timing_cvs)
-        if self.qualified_at_final != has_performance:
-            raise ValueError(
-                "qualified final candidates require latency and timing CVs, and failed "
-                "candidates cannot contain them"
-            )
-        if self.qualified_at_final and (self.candidate_latency_ms is None or not self.timing_cvs):
-            raise ValueError("qualified final candidates require complete timing data")
+        has_performance_evidence = self.candidate_latency_ms is not None or bool(self.timing_cvs)
+        if not self.qualified_at_final and has_performance_evidence:
+            raise ValueError("non-qualified candidates cannot contain performance data")
+        if self.candidate_latency_ms is not None and not self.timing_cvs:
+            raise ValueError("candidate latency requires timing CVs")
         return self
 
     @property
@@ -104,13 +101,13 @@ class TrajectoryMeasurement(CanaryModel):
 
     @property
     def efficiency(self) -> float | None:
-        if self.candidate_latency_ms is None:
+        if self.candidate_latency_ms is None or self.baseline_latency_ms is None:
             return None
         return self.baseline_latency_ms / self.candidate_latency_ms
 
     @property
     def target_realization(self) -> float | None:
-        if self.candidate_latency_ms is None:
+        if self.candidate_latency_ms is None or self.expert_latency_ms is None:
             return None
         return self.expert_latency_ms / self.candidate_latency_ms
 
@@ -127,6 +124,7 @@ class CellAggregate(CanaryModel):
     infrastructure_failures: int = Field(ge=0, le=2)
     qualified_at_first_count: int = Field(ge=0, le=2)
     qualified_at_final_count: int = Field(ge=0, le=2)
+    timed_final_count: int = Field(ge=0, le=2)
     performance_stable: bool
     median_candidate_latency_ms: float | None = Field(default=None, gt=0)
     median_efficiency: float | None = Field(default=None, gt=0)
@@ -190,6 +188,9 @@ class StudyAnalysis(CanaryModel):
     schema_version: Literal["abstrak-canary-analysis.v1"] = "abstrak-canary-analysis.v1"
     outcome: StudyOutcome
     rationale: tuple[str, ...]
+    expert_oracle_complete: bool
+    baseline_complete: bool
+    shakeout_passed: bool
     expected_trajectories: int = Field(ge=1)
     received_trajectories: int = Field(ge=0)
     qualified_at_first: int = Field(ge=0)
@@ -286,6 +287,11 @@ def aggregate_cells(
                     record.infrastructure_failure for record in cell_records
                 )
                 qualified = tuple(record for record in observed if record.qualified_at_final)
+                timed_qualified = tuple(
+                    record
+                    for record in qualified
+                    if record.candidate_latency_ms is not None and record.timing_cvs
+                )
                 if len(cell_records) != len(replicates) or infrastructure_failures:
                     status: CellStatus = "infrastructure_missing"
                 elif len(qualified) == 2:
@@ -295,10 +301,12 @@ def aggregate_cells(
                 else:
                     status = "failed"
 
-                final_cvs = tuple(record.timing_cvs[-1] for record in qualified)
+                final_cvs = tuple(
+                    record.timing_cvs[-1] for record in qualified if record.timing_cvs
+                )
                 performance_stable = (
                     status == "stable_qualified"
-                    and len(final_cvs) == 2
+                    and len(timed_qualified) == 2
                     and all(cv <= max_timing_cv for cv in final_cvs)
                 )
                 aggregate = CellAggregate(
@@ -310,32 +318,38 @@ def aggregate_cells(
                     infrastructure_failures=infrastructure_failures,
                     qualified_at_first_count=sum(record.qualified_at_first for record in observed),
                     qualified_at_final_count=len(qualified),
+                    timed_final_count=len(timed_qualified),
                     performance_stable=performance_stable,
                     median_candidate_latency_ms=(
                         statistics.median(
                             record.candidate_latency_ms
-                            for record in qualified
+                            for record in timed_qualified
                             if record.candidate_latency_ms is not None
                         )
-                        if qualified
+                        if performance_stable
                         else None
                     ),
                     median_efficiency=(
                         statistics.median(
                             record.efficiency
-                            for record in qualified
+                            for record in timed_qualified
                             if record.efficiency is not None
                         )
-                        if qualified
+                        if performance_stable
+                        and all(record.efficiency is not None for record in timed_qualified)
                         else None
                     ),
                     median_target_realization=(
                         statistics.median(
                             record.target_realization
-                            for record in qualified
+                            for record in timed_qualified
                             if record.target_realization is not None
                         )
-                        if qualified
+                        if performance_stable
+                        and all(
+                            record.target_realization is not None
+                            for record in timed_qualified
+                        )
                         else None
                     ),
                     median_calls=(
@@ -612,6 +626,7 @@ def analyze_study(
     targets: tuple[str, ...],
     expert_oracle_complete: bool,
     shakeout_passed: bool,
+    baseline_complete: bool = True,
     max_timing_cv: float = 0.05,
     tie_fraction: float = 0.05,
 ) -> StudyAnalysis:
@@ -674,12 +689,16 @@ def analyze_study(
         for cell in cells
     )
 
-    if not expert_oracle_complete or not shakeout_passed:
+    if not expert_oracle_complete or not baseline_complete or not shakeout_passed:
         outcome: StudyOutcome = "invalid_floor"
-        rationale = (
-            "expert oracle matrix is incomplete"
-            if not expert_oracle_complete
-            else "shakeout gate did not pass",
+        rationale = tuple(
+            reason
+            for incomplete, reason in (
+                (not expert_oracle_complete, "expert oracle matrix is incomplete"),
+                (not baseline_complete, "common baseline matrix is incomplete"),
+                (not shakeout_passed, "shakeout gate did not pass"),
+            )
+            if incomplete
         )
     elif has_infrastructure_gap:
         outcome = "inconclusive_infrastructure"
@@ -710,6 +729,9 @@ def analyze_study(
     return StudyAnalysis(
         outcome=outcome,
         rationale=rationale,
+        expert_oracle_complete=expert_oracle_complete,
+        baseline_complete=baseline_complete,
+        shakeout_passed=shakeout_passed,
         expected_trajectories=len(agents) * len(tasks) * len(targets) * 2,
         received_trajectories=len(records),
         qualified_at_first=sum(record.qualified_at_first for record in records),

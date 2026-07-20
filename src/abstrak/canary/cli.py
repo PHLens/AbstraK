@@ -22,6 +22,17 @@ from abstrak.canary.gates import GateError, run_baseline_gates, run_oracle_gates
 from abstrak.canary.loop import CanaryAgentLoop
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.remote import LocalWorkerExecutor, SshWorkerExecutor, WorkerExecutionError
+from abstrak.canary.report import (
+    DEFAULT_BASELINE_GATE_STUDY_ID,
+    DEFAULT_FORMAL_STUDY_ID,
+    DEFAULT_ORACLE_GATE_STUDY_ID,
+    DEFAULT_REPORT_STUDY_ID,
+    DEFAULT_SHAKEOUT_STUDY_ID,
+    DEFAULT_TIMING_STUDY_ID,
+    AnalysisReportError,
+    load_analysis_report,
+    write_analysis_report,
+)
 from abstrak.canary.schedule import R1_TARGETS, R1_TASKS
 from abstrak.canary.targets import (
     TargetRegistryError,
@@ -242,6 +253,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     gates.add_argument("--asset-root", default=str(DEFAULT_ASSET_ROOT))
     gates.set_defaults(target="triton-a100")
+
+    analyze = subparsers.add_parser(
+        "analyze-study", help="build or resume the sealed preregistered R1 report"
+    )
+    analyze.add_argument("--artifact-root", default="artifacts/r1-a100")
+    analyze.add_argument("--formal-study-id", default=DEFAULT_FORMAL_STUDY_ID)
+    analyze.add_argument("--oracle-gate-study-id", default=DEFAULT_ORACLE_GATE_STUDY_ID)
+    analyze.add_argument("--baseline-gate-study-id", default=DEFAULT_BASELINE_GATE_STUDY_ID)
+    analyze.add_argument("--timing-study-id", default=DEFAULT_TIMING_STUDY_ID)
+    analyze.add_argument("--shakeout-study-id", default=DEFAULT_SHAKEOUT_STUDY_ID)
+    analyze.add_argument("--report-study-id", default=DEFAULT_REPORT_STUDY_ID)
     return parser
 
 
@@ -597,6 +619,36 @@ def _run_gates(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _run_analysis(arguments: argparse.Namespace) -> int:
+    report = load_analysis_report(
+        artifact_root=arguments.artifact_root,
+        formal_study_id=arguments.formal_study_id,
+        oracle_gate_study_id=arguments.oracle_gate_study_id,
+        baseline_gate_study_id=arguments.baseline_gate_study_id,
+        timing_study_id=arguments.timing_study_id,
+        shakeout_study_id=arguments.shakeout_study_id,
+    )
+    directory, resumed = write_analysis_report(
+        report,
+        artifact_root=arguments.artifact_root,
+        report_study_id=arguments.report_study_id,
+    )
+    _emit(
+        {
+            "status": "complete",
+            "outcome": report.analysis.outcome,
+            "received_trajectories": report.formal_coverage.received_trajectories,
+            "qualified_at_first": report.formal_coverage.qualified_at_first,
+            "qualified_at_final": report.formal_coverage.qualified_at_final,
+            "infrastructure_censored": report.formal_coverage.infrastructure_censored,
+            "timing_final_status_counts": report.timing_coverage.final_status_counts,
+            "artifact_directory": str(directory),
+            "resumed": resumed,
+        }
+    )
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     if values and values[0] == "worker":
@@ -611,6 +663,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _run_trusted(arguments)
         if arguments.command == "run-gates":
             return _run_gates(arguments)
+        if arguments.command == "analyze-study":
+            return _run_analysis(arguments)
         return _run_cell(arguments)
     except (
         CanaryCliError,
@@ -621,6 +675,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         TaskRegistryError,
         BaselineRegistryError,
         GateError,
+        AnalysisReportError,
         ValidationError,
     ) as error:
         print(f"configuration error: {error}", file=sys.stderr)
