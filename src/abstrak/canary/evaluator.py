@@ -376,7 +376,7 @@ def evaluate_job(
                     timing_inputs,
                     num_warmup=job.timing.warmup_runs,
                     num_trials=job.timing.trial_runs,
-                    discard_first=0,
+                    discard_first=job.timing.discard_first,
                     verbose=False,
                     device=torch_device,
                 )

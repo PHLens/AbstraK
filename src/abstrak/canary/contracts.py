@@ -186,6 +186,7 @@ class TimingSpec(CanaryModel):
     method: Literal["cuda_event"] = "cuda_event"
     warmup_runs: int = Field(default=5, ge=1, le=1000)
     trial_runs: int = Field(default=100, ge=1, le=10000)
+    discard_first: Literal[1] = 1
     repetitions: int = Field(default=3, ge=1, le=20)
     max_cv: float = Field(default=0.05, gt=0, le=1)
 
