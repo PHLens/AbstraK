@@ -165,6 +165,29 @@ def test_ssh_worker_defaults_are_hashable_a100_execution_inputs() -> None:
     assert record["expected_compute_capability"] == (8, 0)
     assert record["expected_triton_version"] == "3.7.1"
     assert record["sandbox"] == "bubblewrap"
+    assert record["network_isolated"] is True
+
+
+def test_supervised_ssh_worker_records_missing_isolation() -> None:
+    arguments = cli._parser().parse_args(
+        [
+            "run-trusted",
+            "--ssh-host",
+            "gpu.example",
+            "--worker-root",
+            "/srv/AbstraK",
+            "--allow-supervised-worker",
+        ]
+    )
+
+    worker = cli._worker_executor(arguments)
+    record = cli._transport_record(worker)
+
+    assert record["sandbox"] == "setpriv-supervised"
+    assert record["sandbox_user"] == "nobody"
+    assert record["network_isolated"] is False
+    assert record["filesystem_read_only"] is False
+    assert record["low_privilege"] is True
 
 
 def test_run_cell_rejects_unsandboxed_local_worker_before_auth(capsys, monkeypatch) -> None:

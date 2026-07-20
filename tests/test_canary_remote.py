@@ -549,6 +549,30 @@ def test_ssh_sandbox_rebinds_tmp_venv_after_tmpfs() -> None:
     ]
 
 
+def test_supervised_ssh_mode_drops_privileges_and_clears_environment() -> None:
+    executor = SshWorkerExecutor(
+        "gpu.example",
+        python_executable="/tmp/abstrak-gpu-venv/bin/python",
+        pythonpath="/srv/AbstraK/src",
+        kernelbench_root="/srv/KernelBench",
+        asset_root="/srv/AbstraK/benchmarks/r1-a100",
+        sandbox_mode="setpriv",
+    )
+
+    remote = shlex.split(executor._command(_job())[-1])
+
+    assert "bwrap" not in remote
+    assert remote[remote.index("setpriv") : remote.index("setpriv") + 6] == [
+        "setpriv",
+        "--reuid=nobody",
+        "--regid=nogroup",
+        "--clear-groups",
+        "--no-new-privs",
+        "--reset-env",
+    ]
+    assert "PYTHONPATH=/srv/AbstraK/src" in remote
+
+
 def test_ssh_executor_rejects_paths_hidden_by_sandbox() -> None:
     with pytest.raises(ValueError, match="pythonpath cannot be under"):
         SshWorkerExecutor(

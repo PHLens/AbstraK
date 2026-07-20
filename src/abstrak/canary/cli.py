@@ -146,6 +146,14 @@ def _add_worker_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--worker-asset-root", help="frozen benchmark assets on the worker")
     parser.add_argument("--worker-timeout", type=float, default=300.0)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--allow-supervised-worker",
+        action="store_true",
+        help=(
+            "run SSH jobs as an unprivileged user without network isolation when the "
+            "platform forbids bubblewrap"
+        ),
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -233,10 +241,13 @@ def _worker_executor(arguments: argparse.Namespace) -> LocalWorkerExecutor | Ssh
             expected_hardware_substring="A100",
             expected_compute_capability=(8, 0),
             expected_triton_version=target.version if target.backend == "triton" else None,
+            sandbox_mode=("setpriv" if arguments.allow_supervised_worker else "bubblewrap"),
         )
 
     if arguments.worker_pythonpath is not None:
         raise CanaryCliError("--worker-pythonpath is only valid with --ssh-host")
+    if arguments.allow_supervised_worker:
+        raise CanaryCliError("--allow-supervised-worker is only valid with --ssh-host")
     if arguments.command == "run-cell":
         raise CanaryCliError("run-cell requires --ssh-host for the remote bwrap sandbox")
     root = Path(arguments.worker_root).expanduser() if arguments.worker_root else REPOSITORY_ROOT
@@ -265,13 +276,18 @@ def _transport_record(
     worker: LocalWorkerExecutor | SshWorkerExecutor,
 ) -> dict[str, object]:
     if isinstance(worker, SshWorkerExecutor):
+        supervised = worker.sandbox_mode == "setpriv"
         return {
             "kind": "ssh",
             "host": worker.host,
             "ssh_executable": worker.ssh_executable,
             "remote_timeout_executable": worker.remote_timeout_executable,
-            "sandbox": "bubblewrap",
+            "sandbox": "setpriv-supervised" if supervised else "bubblewrap",
             "sandbox_executable": worker.sandbox_executable,
+            "sandbox_user": worker.sandbox_user if supervised else None,
+            "network_isolated": not supervised,
+            "filesystem_read_only": not supervised,
+            "low_privilege": supervised,
             "python_executable": worker.python_executable,
             "pythonpath": worker.pythonpath,
             "kernelbench_root": worker.kernelbench_root,

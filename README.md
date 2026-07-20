@@ -121,3 +121,9 @@ temporary home/cache paths, a cleared environment, remote and controller
 timeouts, GPU health quarantine, and A100/SM80 checks. This remains a
 supervised canary rather than an adversarial security boundary; formal runs
 must use a dedicated worker and independently verify its bubblewrap policy.
+
+Some managed GPU containers prohibit nested mount namespaces. For a supervised
+smoke only, `--allow-supervised-worker` runs the SSH worker as `nobody` with a
+cleared environment and no-new-privileges, while recording
+`network_isolated: false` and `filesystem_read_only: false` in the run
+manifest. This mode is not valid for the formal matrix.

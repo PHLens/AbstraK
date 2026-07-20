@@ -43,6 +43,7 @@ FailureCategory = Literal[
     "health_unhealthy",
     "quarantined",
 ]
+SandboxMode = Literal["bubblewrap", "setpriv"]
 
 
 class WorkerExecutionError(RuntimeError):
@@ -532,6 +533,10 @@ class SshWorkerExecutor(_SubprocessExecutor):
         ssh_executable: str = "ssh",
         remote_timeout_executable: str = "timeout",
         sandbox_executable: str = "bwrap",
+        sandbox_mode: SandboxMode = "bubblewrap",
+        setpriv_executable: str = "setpriv",
+        sandbox_user: str = "nobody",
+        sandbox_group: str = "nogroup",
         timeout_seconds: float = 300.0,
         health_timeout_seconds: float = 30.0,
         popen_factory: PopenFactory = subprocess.Popen,
@@ -563,9 +568,14 @@ class SshWorkerExecutor(_SubprocessExecutor):
             "ssh_executable": ssh_executable,
             "remote_timeout_executable": remote_timeout_executable,
             "sandbox_executable": sandbox_executable,
+            "setpriv_executable": setpriv_executable,
+            "sandbox_user": sandbox_user,
+            "sandbox_group": sandbox_group,
         }.items():
             if not value:
                 raise ValueError(f"{name} cannot be empty")
+        if sandbox_mode not in {"bubblewrap", "setpriv"}:
+            raise ValueError("sandbox_mode must be bubblewrap or setpriv")
         for name, value in {
             "python_executable": python_executable,
             "pythonpath": pythonpath,
@@ -593,8 +603,53 @@ class SshWorkerExecutor(_SubprocessExecutor):
         self.ssh_executable = ssh_executable
         self.remote_timeout_executable = remote_timeout_executable
         self.sandbox_executable = sandbox_executable
+        self.sandbox_mode = sandbox_mode
+        self.setpriv_executable = setpriv_executable
+        self.sandbox_user = sandbox_user
+        self.sandbox_group = sandbox_group
+
+    def _worker_environment_command(self, arguments: Sequence[str]) -> list[str]:
+        python_bin = str(PurePosixPath(self.python_executable).parent)
+        sandbox_path = ":".join(
+            (
+                python_bin,
+                "/usr/local/cuda/bin",
+                "/usr/local/sbin",
+                "/usr/local/bin",
+                "/usr/sbin",
+                "/usr/bin",
+                "/sbin",
+                "/bin",
+            )
+        )
+        return [
+            "env",
+            "HOME=/tmp",
+            "TMPDIR=/tmp",
+            f"PATH={sandbox_path}",
+            f"PYTHONPATH={self.pythonpath}",
+            "PYTHONNOUSERSITE=1",
+            "PYTHONDONTWRITEBYTECODE=1",
+            self.python_executable,
+            "-m",
+            WORKER_MODULE,
+            *arguments,
+        ]
+
+    def _setpriv_worker_command(self, arguments: Sequence[str]) -> list[str]:
+        return [
+            self.setpriv_executable,
+            f"--reuid={self.sandbox_user}",
+            f"--regid={self.sandbox_group}",
+            "--clear-groups",
+            "--no-new-privs",
+            "--reset-env",
+            *self._worker_environment_command(arguments),
+        ]
 
     def _sandboxed_worker_command(self, arguments: Sequence[str]) -> list[str]:
+        if self.sandbox_mode == "setpriv":
+            return self._setpriv_worker_command(arguments)
         python_path = PurePosixPath(self.python_executable)
         python_bin = str(python_path.parent)
         sandbox_path = ":".join(
