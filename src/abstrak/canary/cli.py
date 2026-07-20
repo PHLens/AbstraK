@@ -201,6 +201,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     run_cell.add_argument("--trajectory-id", help="safe immutable trajectory identifier")
     run_cell.add_argument(
+        "--study-id",
+        default=STUDY_ID,
+        help="safe immutable study directory identifier",
+    )
+    run_cell.add_argument(
         "--artifact-root",
         default="artifacts/r1-a100",
         help="ignored-by-Git root for private trajectory artifacts",
@@ -484,7 +489,7 @@ def _run_cell(arguments: argparse.Namespace) -> int:
     )
     store = TrajectoryStore.create(
         arguments.artifact_root,
-        STUDY_ID,
+        arguments.study_id,
         trajectory_id,
         secrets=secret_values,
     )
@@ -493,7 +498,7 @@ def _run_cell(arguments: argparse.Namespace) -> int:
         "run-manifest.json",
         {
             "schema_version": "canary-run-manifest.v1",
-            "study_id": STUDY_ID,
+            "study_id": arguments.study_id,
             "trajectory_id": trajectory_id,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "task": task,
