@@ -68,6 +68,115 @@ _MATMUL_BIAS_CUTE_ORACLE = PinnedAsset(
     sha256="ff67983fd0a66b37105821491db87a8fe9288921a9b4f14e6de9bb3b9043ae23",
 )
 
+
+def _scientific_asset(kind: str, backend: str | None, sha256: str) -> PinnedAsset:
+    directory = "tasks" if backend is None else f"oracles/{backend}"
+    return PinnedAsset(relative_path=f"{directory}/{kind}.py", sha256=sha256)
+
+
+_RMSNORM_SOURCE = _scientific_asset(
+    "rmsnorm_static", None, "7bf18a0db0bcdc98d645823fbbdc53b2b6bddb47939417e57e73379f875597cb"
+)
+_RMSNORM_ORACLES = MappingProxyType(
+    {
+        "triton": _scientific_asset(
+            "rmsnorm_static",
+            "triton",
+            "a78610048c3973cb8284aca2f0f078ca4601c939d8c749e10985546d84054f64",
+        ),
+        "tilelang": _scientific_asset(
+            "rmsnorm_static",
+            "tilelang",
+            "31ab488dbed16cc358b0de0028125b6a7255c537f821ebcb69292c2332520a28",
+        ),
+        "cute": _scientific_asset(
+            "rmsnorm_static",
+            "cute",
+            "b3ce19069eb0db26445b6913430419825a8fb7c4e0f54758acc0f6ac781a9ca4",
+        ),
+    }
+)
+_LAYERNORM_SOURCE = _scientific_asset(
+    "layernorm_static", None, "26464a3b5e134c9ddd062c62627a73c76351edc2baa79ffd3bc5afd1aab47137"
+)
+_LAYERNORM_ORACLES = MappingProxyType(
+    {
+        "triton": _scientific_asset(
+            "layernorm_static",
+            "triton",
+            "45b1fa8efa8b35fc00fe26dcb65d2d4014da921bd697cab6ac46b207bb713ca9",
+        ),
+        "tilelang": _scientific_asset(
+            "layernorm_static",
+            "tilelang",
+            "b2f41c1fb1a8904253f3b560c313e8fc8cc08d4a7f6a2516a9fedd9064ba687c",
+        ),
+        "cute": _scientific_asset(
+            "layernorm_static",
+            "cute",
+            "a94b52ceb65d8ff615e72c5f74df9d525bacb0219ba096892516d49dd4ccf7fd",
+        ),
+    }
+)
+_GEMM_SOURCE = _scientific_asset(
+    "gemm_static", None, "d777fe3b008e3137de474c85e6ba5e4fc38188f032d5836afa4ff5b7e756f7cb"
+)
+_GEMM_ORACLES = MappingProxyType(
+    {
+        "triton": _scientific_asset(
+            "gemm_static",
+            "triton",
+            "d6d1fefbdc4d47607525998e29f68159dd161630c37d8422e726adfca40faca9",
+        ),
+        "tilelang": _scientific_asset(
+            "gemm_static",
+            "tilelang",
+            "ddb4b2da2fb0381c453031ef62d97aa3a1cb1d3dad658e6e066fc6bc838405b1",
+        ),
+        "cute": _scientific_asset(
+            "gemm_static",
+            "cute",
+            "3c465f69eb4b3f65d4b1e1afebf7e262c017d2a7069e2bef63fd3d9ce98be0e0",
+        ),
+    }
+)
+_GEMM_BIAS_RELU_SOURCE = _scientific_asset(
+    "gemm_bias_relu_static",
+    None,
+    "53cb92a3cd9a0ccc1b21612b4f60631d4f9694f1da9d22e906756cfb07f5b332",
+)
+_GEMM_BIAS_RELU_ORACLES = MappingProxyType(
+    {
+        "triton": _scientific_asset(
+            "gemm_bias_relu_static",
+            "triton",
+            "d30eae2dd7688b41a37d5c5c61f2c119125cbd7f13f3b95fc6ec2acc34b4cfa3",
+        ),
+        "tilelang": _scientific_asset(
+            "gemm_bias_relu_static",
+            "tilelang",
+            "b0aafea981975ad22ce582a374fa308968c8669d6a447afc125160875593b24d",
+        ),
+        "cute": _scientific_asset(
+            "gemm_bias_relu_static",
+            "cute",
+            "0bba9d6b8827cb179279f657b67199429e6e7286b50455aad0b6f3cc8f86ef86",
+        ),
+    }
+)
+
+_SCIENTIFIC_DEV_CASES = (
+    InputCaseSpec(id="dev-random-1", kind="random", seed=2026071701),
+    InputCaseSpec(id="dev-random-2", kind="random", seed=2026071702),
+)
+_SCIENTIFIC_SEALED_CASES = (
+    InputCaseSpec(id="sealed-random-1", kind="random", seed=2026071801),
+    InputCaseSpec(id="sealed-random-2", kind="random", seed=2026071802),
+    InputCaseSpec(id="sealed-random-3", kind="random", seed=2026071803),
+    InputCaseSpec(id="sealed-random-4", kind="random", seed=2026071804),
+    InputCaseSpec(id="sealed-constant", kind="constant", seed=2026071805, value=0.25),
+)
+
 _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
     {
         "row-reduction-scale": TaskPackSpec(
@@ -148,6 +257,104 @@ _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
                 ),
             ),
         ),
+        "rmsnorm-static": TaskPackSpec(
+            id="rmsnorm-static",
+            specification=(
+                "Given contiguous FP16 tensors x and gamma with shapes (4096, 4096) and "
+                "(4096,), apply row-wise RMSNorm using FP32 accumulation and epsilon "
+                "1e-5, multiply by gamma in FP32, and return contiguous FP16 output with "
+                "shape (4096, 4096)."
+            ),
+            source_path=_RMSNORM_SOURCE.relative_path,
+            source_sha256=_RMSNORM_SOURCE.sha256,
+            dtype="fp16",
+            input_shapes=((4096, 4096), (4096,)),
+            parameters=(
+                ("rows", 4096),
+                ("columns", 4096),
+                ("epsilon", 1e-5),
+                ("affine", "gamma"),
+                ("output_dtype", "fp16"),
+            ),
+            atol=1e-2,
+            rtol=1e-2,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=_SCIENTIFIC_DEV_CASES,
+            sealed_cases=_SCIENTIFIC_SEALED_CASES,
+        ),
+        "layernorm-static": TaskPackSpec(
+            id="layernorm-static",
+            specification=(
+                "Given contiguous FP16 tensors x, gamma, and beta with shapes "
+                "(4096, 4096), (4096,), and (4096,), apply row-wise LayerNorm using "
+                "FP32 mean and variance, epsilon 1e-5, and FP32 affine arithmetic, then "
+                "return contiguous FP16 output with shape (4096, 4096)."
+            ),
+            source_path=_LAYERNORM_SOURCE.relative_path,
+            source_sha256=_LAYERNORM_SOURCE.sha256,
+            dtype="fp16",
+            input_shapes=((4096, 4096), (4096,), (4096,)),
+            parameters=(
+                ("rows", 4096),
+                ("columns", 4096),
+                ("epsilon", 1e-5),
+                ("affine", "gamma-beta"),
+                ("output_dtype", "fp16"),
+            ),
+            atol=1e-2,
+            rtol=1e-2,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=_SCIENTIFIC_DEV_CASES,
+            sealed_cases=_SCIENTIFIC_SEALED_CASES,
+        ),
+        "gemm-static": TaskPackSpec(
+            id="gemm-static",
+            specification=(
+                "Given contiguous FP16 tensors a and b with shapes (1024, 4096) and "
+                "(4096, 4096), compute a @ b using FP32 accumulation and return a "
+                "contiguous FP16 tensor with shape (1024, 4096)."
+            ),
+            source_path=_GEMM_SOURCE.relative_path,
+            source_sha256=_GEMM_SOURCE.sha256,
+            dtype="fp16",
+            input_shapes=((1024, 4096), (4096, 4096)),
+            parameters=(
+                ("m", 1024),
+                ("n", 4096),
+                ("k", 4096),
+                ("output_dtype", "fp16"),
+            ),
+            atol=1e-2,
+            rtol=1e-2,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=_SCIENTIFIC_DEV_CASES,
+            sealed_cases=_SCIENTIFIC_SEALED_CASES,
+        ),
+        "gemm-bias-relu-static": TaskPackSpec(
+            id="gemm-bias-relu-static",
+            specification=(
+                "Given contiguous FP16 tensors a, b, and bias with shapes (1024, 4096), "
+                "(4096, 4096), and (4096,), compute a @ b using FP32 accumulation, add "
+                "bias and apply ReLU in FP32, then return a contiguous FP16 tensor with "
+                "shape (1024, 4096)."
+            ),
+            source_path=_GEMM_BIAS_RELU_SOURCE.relative_path,
+            source_sha256=_GEMM_BIAS_RELU_SOURCE.sha256,
+            dtype="fp16",
+            input_shapes=((1024, 4096), (4096, 4096), (4096,)),
+            parameters=(
+                ("m", 1024),
+                ("n", 4096),
+                ("k", 4096),
+                ("epilogue", "bias-relu"),
+                ("output_dtype", "fp16"),
+            ),
+            atol=1e-2,
+            rtol=1e-2,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=_SCIENTIFIC_DEV_CASES,
+            sealed_cases=_SCIENTIFIC_SEALED_CASES,
+        ),
     }
 )
 
@@ -172,6 +379,13 @@ _TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
                     "cute": _MATMUL_BIAS_CUTE_ORACLE,
                 }
             ),
+        ),
+        "rmsnorm-static": TaskAssets(source=_RMSNORM_SOURCE, oracles=_RMSNORM_ORACLES),
+        "layernorm-static": TaskAssets(source=_LAYERNORM_SOURCE, oracles=_LAYERNORM_ORACLES),
+        "gemm-static": TaskAssets(source=_GEMM_SOURCE, oracles=_GEMM_ORACLES),
+        "gemm-bias-relu-static": TaskAssets(
+            source=_GEMM_BIAS_RELU_SOURCE,
+            oracles=_GEMM_BIAS_RELU_ORACLES,
         ),
     }
 )

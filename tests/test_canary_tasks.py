@@ -22,7 +22,14 @@ from abstrak.canary.tasks import (
 def test_row_reduction_task_pack_freezes_cases_and_semantics() -> None:
     task = get_task_pack("row-reduction-scale")
 
-    assert list_task_ids() == ("matmul-bias", "row-reduction-scale")
+    assert list_task_ids() == (
+        "gemm-bias-relu-static",
+        "gemm-static",
+        "layernorm-static",
+        "matmul-bias",
+        "rmsnorm-static",
+        "row-reduction-scale",
+    )
     assert task.dtype == "fp16"
     assert "sum each row" in task.specification
     assert task.reference_precision == "fp32"
@@ -75,6 +82,28 @@ def test_matmul_bias_task_pack_freezes_cases_and_semantics() -> None:
     assert len(task.sealed_cases) == 5
     assert task.sealed_cases[-1].kind == "constant"
     assert task.sealed_cases[-1].value == 0.125
+
+
+def test_scientific_task_packs_match_the_frozen_matrix() -> None:
+    expected_shapes = {
+        "rmsnorm-static": ((4096, 4096), (4096,)),
+        "layernorm-static": ((4096, 4096), (4096,), (4096,)),
+        "gemm-static": ((1024, 4096), (4096, 4096)),
+        "gemm-bias-relu-static": ((1024, 4096), (4096, 4096), (4096,)),
+    }
+
+    for task_id, shapes in expected_shapes.items():
+        task = get_task_pack(task_id)
+        assert task.input_shapes == shapes
+        assert task.dtype == "fp16"
+        assert task.reference_precision == "fp32"
+        assert task.atol == task.rtol == 1e-2
+        assert len(task.dev_cases) == 2
+        assert len(task.sealed_cases) == 5
+        assert task.sealed_cases[-1].kind == "constant"
+        assert task.sealed_cases[-1].value == 0.25
+        for backend in ("triton", "tilelang", "cute"):
+            assert "class ModelNew" in load_oracle_source(task_id, backend)
 
 
 def test_unknown_task_and_oracle_are_rejected() -> None:
