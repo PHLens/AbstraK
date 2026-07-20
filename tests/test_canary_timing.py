@@ -75,7 +75,12 @@ class FakeWorker:
         )
 
 
-def _run(worker: FakeWorker, timing: TimingSpec | None = None):
+def _run(
+    worker: FakeWorker,
+    timing: TimingSpec | None = None,
+    *,
+    job_kind: str = "sealed",
+):
     task: TaskPackSpec = get_task_pack("row-reduction-scale")
     return run_timing_protocol(
         worker,
@@ -84,6 +89,7 @@ def _run(worker: FakeWorker, timing: TimingSpec | None = None):
         source="class ModelNew: pass\n",
         job_prefix="formal-cell-r1",
         timing=timing or TimingSpec(),
+        job_kind=job_kind,  # type: ignore[arg-type]
     )
 
 
@@ -94,6 +100,7 @@ def test_stable_protocol_preserves_jobs_hashes_and_samples() -> None:
 
     assert summary.status == "stable"
     assert summary.stable is True
+    assert summary.job_kind == "sealed"
     assert summary.median_ms == 1.0
     assert len(summary.attempts) == 1
     assert summary.attempts[0].process_medians_ms == (1.0, 1.01, 0.99)
@@ -194,3 +201,12 @@ def test_correctness_failure_stops_without_retry() -> None:
     assert summary.status == "correctness_failure"
     assert len(summary.jobs) == len(summary.results) == len(worker.jobs) == 1
     assert summary.results[0].status == "wrong_result"
+
+
+def test_oracle_job_kind_is_preserved_in_every_clean_process() -> None:
+    worker = FakeWorker([(1.0, 0.01), (1.0, 0.01), (1.0, 0.01)])
+
+    summary = _run(worker, job_kind="oracle")
+
+    assert summary.job_kind == "oracle"
+    assert {job.kind for job in summary.jobs} == {"oracle"}

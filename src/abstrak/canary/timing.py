@@ -26,6 +26,7 @@ TimingRunStatus = Literal[
     "worker_failure",
     "correctness_failure",
 ]
+TimingJobKind = Literal["sealed", "oracle", "baseline"]
 
 DEFAULT_FORMAL_TIMING = TimingSpec()
 _INFRASTRUCTURE_FAILURES = {"environment_error", "timeout", "worker_error"}
@@ -88,6 +89,7 @@ class TimingProtocolSummary(CanaryModel):
     task_id: str = Field(pattern=IDENTIFIER_PATTERN)
     target_id: str = Field(pattern=IDENTIFIER_PATTERN)
     candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    job_kind: TimingJobKind
     device: str = Field(pattern=r"^cuda:[0-9]+$")
     timing: TimingSpec
     status: TimingRunStatus
@@ -133,13 +135,14 @@ def _job(
     job_prefix: str,
     device: str,
     timing: TimingSpec,
+    job_kind: TimingJobKind,
     attempt: int,
     repetition: int,
 ) -> WorkerJob:
     process_timing = timing.model_copy(update={"repetitions": 1})
     return WorkerJob(
         job_id=f"{job_prefix}-timing-a{attempt}-p{repetition}",
-        kind="sealed",
+        kind=job_kind,
         task=task,
         target=target,
         case_ids=tuple(case.id for case in task.sealed_cases),
@@ -180,6 +183,7 @@ def _summary(
     candidate_sha256: str,
     device: str,
     timing: TimingSpec,
+    job_kind: TimingJobKind,
     attempts: list[TimingAttemptSummary],
 ) -> TimingProtocolSummary:
     terminal = attempts[-1]
@@ -188,6 +192,7 @@ def _summary(
         task_id=task.id,
         target_id=target.id,
         candidate_sha256=candidate_sha256,
+        job_kind=job_kind,
         device=device,
         timing=timing,
         status=terminal.status,
@@ -209,6 +214,7 @@ def run_timing_protocol(
     job_prefix: str,
     device: str = "cuda:0",
     timing: TimingSpec = DEFAULT_FORMAL_TIMING,
+    job_kind: TimingJobKind = "sealed",
 ) -> TimingProtocolSummary:
     """Time a correct candidate in independent processes, with one full CV retry."""
 
@@ -228,6 +234,7 @@ def run_timing_protocol(
                 job_prefix=job_prefix,
                 device=device,
                 timing=timing,
+                job_kind=job_kind,
                 attempt=attempt_number,
                 repetition=repetition,
             )
@@ -254,6 +261,7 @@ def run_timing_protocol(
                     candidate_sha256=candidate_sha256,
                     device=device,
                     timing=timing,
+                    job_kind=job_kind,
                     attempts=attempts,
                 )
 
@@ -280,6 +288,7 @@ def run_timing_protocol(
                     candidate_sha256=candidate_sha256,
                     device=device,
                     timing=timing,
+                    job_kind=job_kind,
                     attempts=attempts,
                 )
 
@@ -313,6 +322,7 @@ def run_timing_protocol(
                 candidate_sha256=candidate_sha256,
                 device=device,
                 timing=timing,
+                job_kind=job_kind,
                 attempts=attempts,
             )
 

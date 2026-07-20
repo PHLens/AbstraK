@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from abstrak.canary.baselines import BaselineRegistryError, validate_baseline_source
 from abstrak.canary.contracts import CaseResult, WorkerJob, WorkerResult
 from abstrak.canary.fallback import validate_candidate_source
 from abstrak.canary.targets import TargetRegistryError, get_target_stack
@@ -238,10 +239,20 @@ def evaluate_job(
     if registry_error is not None:
         return _result(job, "worker_error", error=registry_error)
 
-    static = validate_candidate_source(job.candidate_source, job.target.backend)
-    static_errors = tuple(f"{issue.code}: {issue.message}" for issue in static.errors)
-    if not static.valid:
-        return _result(job, "static_check_failed", static_errors=static_errors)
+    if job.kind == "baseline":
+        try:
+            validate_baseline_source(
+                job.task.id,
+                job.candidate_source,
+                source_sha256=job.candidate_sha256,
+            )
+        except BaselineRegistryError as error:
+            return _result(job, "worker_error", error=str(error))
+    else:
+        static = validate_candidate_source(job.candidate_source, job.target.backend)
+        static_errors = tuple(f"{issue.code}: {issue.message}" for issue in static.errors)
+        if not static.valid:
+            return _result(job, "static_check_failed", static_errors=static_errors)
 
     selected_device = device or job.device
     try:
