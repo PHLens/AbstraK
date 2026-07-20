@@ -16,10 +16,13 @@ from uuid import uuid4
 from pydantic import BaseModel, ValidationError
 
 from abstrak.canary.artifacts import TrajectoryArtifactError, TrajectoryStore
+from abstrak.canary.baselines import BaselineRegistryError
 from abstrak.canary.contracts import AgentBudget, TimingSpec, WorkerJob
+from abstrak.canary.gates import GateError, run_baseline_gates, run_oracle_gates
 from abstrak.canary.loop import CanaryAgentLoop
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.remote import LocalWorkerExecutor, SshWorkerExecutor, WorkerExecutionError
+from abstrak.canary.schedule import R1_TARGETS, R1_TASKS
 from abstrak.canary.targets import (
     TargetRegistryError,
     get_target_stack,
@@ -213,6 +216,27 @@ def _parser() -> argparse.ArgumentParser:
         required=True,
         help=f"must equal the fixed request ceiling ({EXPECTED_MAX_REQUESTS})",
     )
+
+    gates = subparsers.add_parser(
+        "run-gates", help="run or resume the formal expert-oracle or B* timing gates"
+    )
+    _add_worker_options(gates)
+    gates.add_argument("--gate-kind", choices=("oracle", "baseline"), required=True)
+    gates.add_argument("--artifact-root", default="artifacts/r1-a100")
+    gates.add_argument("--study-id", help="sealed gate study directory")
+    gates.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge execution of trusted GPU code and baseline code",
+    )
+    gates.add_argument(
+        "--expected-max-jobs",
+        type=int,
+        required=True,
+        help="must equal 72 (12 pairs x 3 processes x one complete retry)",
+    )
+    gates.add_argument("--asset-root", default=str(DEFAULT_ASSET_ROOT))
+    gates.set_defaults(target="triton-a100")
     return parser
 
 
@@ -515,6 +539,59 @@ def _run_cell(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _run_gates(arguments: argparse.Namespace) -> int:
+    if not arguments.live:
+        raise CanaryCliError(
+            "run-gates requires --live because it executes trusted or baseline GPU code"
+        )
+    if arguments.expected_max_jobs != 72:
+        raise CanaryCliError("--expected-max-jobs must equal the fixed gate ceiling (72)")
+    validate_task_registry(asset_root=arguments.asset_root)
+    validate_target_registry(asset_root=arguments.asset_root)
+    worker = _worker_executor(arguments)
+    tasks = tuple(get_task_pack(task_id) for task_id in R1_TASKS)
+    targets = tuple(get_target_stack(target_id) for target_id in R1_TARGETS)
+    if arguments.gate_kind == "oracle":
+        records = run_oracle_gates(
+            worker,
+            tasks=tasks,
+            targets=targets,
+            root=arguments.artifact_root,
+            study_id=arguments.study_id or "r1-a100-oracle-gates",
+            asset_root=arguments.asset_root,
+            device=arguments.device,
+        )
+    else:
+        records = run_baseline_gates(
+            worker,
+            tasks=tasks,
+            target=get_target_stack("triton-a100"),
+            root=arguments.artifact_root,
+            study_id=arguments.study_id or "r1-a100-baseline-gates",
+            device=arguments.device,
+        )
+    _emit(
+        {
+            "status": "complete",
+            "kind": arguments.gate_kind,
+            "records": [
+                {
+                    "task_id": record.task_id,
+                    "target_id": record.target_id,
+                    "variant": record.variant,
+                    "timing_status": record.summary.status,
+                    "stable": record.summary.stable,
+                    "median_ms": record.summary.median_ms,
+                    "artifact_directory": record.artifact_directory,
+                }
+                for record in records
+            ],
+            "transport": _transport_record(worker),
+        }
+    )
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     values = list(sys.argv[1:] if argv is None else argv)
     if values and values[0] == "worker":
@@ -527,6 +604,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(arguments)
         if arguments.command == "run-trusted":
             return _run_trusted(arguments)
+        if arguments.command == "run-gates":
+            return _run_gates(arguments)
         return _run_cell(arguments)
     except (
         CanaryCliError,
@@ -535,6 +614,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ProviderConfigurationError,
         TargetRegistryError,
         TaskRegistryError,
+        BaselineRegistryError,
+        GateError,
         ValidationError,
     ) as error:
         print(f"configuration error: {error}", file=sys.stderr)
