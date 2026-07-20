@@ -570,6 +570,7 @@ def test_supervised_ssh_mode_drops_privileges_and_clears_environment() -> None:
         "--no-new-privs",
         "--reset-env",
     ]
+    assert "--chdir=/tmp" in remote
     assert "PYTHONPATH=/srv/AbstraK/src" in remote
 
 

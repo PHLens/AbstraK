@@ -624,6 +624,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
         )
         return [
             "env",
+            "--chdir=/tmp",
             "HOME=/tmp",
             "TMPDIR=/tmp",
             f"PATH={sandbox_path}",
