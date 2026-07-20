@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
 from abstrak.canary.contracts import (
+    AgentBudget,
     CaseResult,
     InputCaseSpec,
     TargetStackSpec,
     TaskPackSpec,
+    TrajectoryOutcome,
     WorkerJob,
     WorkerResult,
 )
@@ -18,6 +21,7 @@ from abstrak.canary.contracts import (
 def _task() -> TaskPackSpec:
     return TaskPackSpec(
         id="row-reduction-scale",
+        specification="Sum each row in FP32, scale by 0.5, and return FP16.",
         source_path="tasks/row_reduction_scale.py",
         source_sha256="1" * 64,
         dtype="fp16",
@@ -99,6 +103,7 @@ def test_task_parameters_are_immutable_and_public_view_hides_cases() -> None:
         task.parameters[0] = ("scale", 1.0)
     assert set(public_payload) == {
         "id",
+        "specification",
         "dtype",
         "reference_precision",
         "input_shapes",
@@ -179,4 +184,31 @@ def test_target_oracle_reference_must_be_complete() -> None:
             card_sha256="2" * 64,
             adapter="kernelbench",
             oracle_path="oracles/triton.py",
+        )
+
+
+def test_agent_budget_is_strict_and_fixed_to_four_calls() -> None:
+    assert AgentBudget().max_calls == 4
+    with pytest.raises(ValidationError):
+        AgentBudget(max_calls="4")
+    with pytest.raises(ValidationError):
+        AgentBudget(max_calls=5)
+
+
+def test_no_candidate_outcome_cannot_contain_candidate_or_sealed_results() -> None:
+    now = datetime.now(timezone.utc)
+    outcome = TrajectoryOutcome(
+        trajectory_id="trajectory-1",
+        status="no_candidate",
+        calls=4,
+        usage_complete=True,
+        started_at_utc=now,
+        finished_at_utc=now,
+    )
+
+    assert outcome.first_candidate_sha256 is None
+    with pytest.raises(ValidationError, match="cannot contain candidate"):
+        TrajectoryOutcome.model_validate(
+            {**outcome.model_dump(), "first_candidate_sha256": "1" * 64,
+             "final_candidate_sha256": "1" * 64}
         )

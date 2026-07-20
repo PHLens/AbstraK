@@ -24,6 +24,7 @@ def test_row_reduction_task_pack_freezes_cases_and_semantics() -> None:
 
     assert list_task_ids() == ("row-reduction-scale",)
     assert task.dtype == "fp16"
+    assert "sum each row" in task.specification
     assert task.reference_precision == "fp32"
     assert task.input_shapes == ((1024, 1024),)
     assert task.parameter_map == {

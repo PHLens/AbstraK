@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal
 
@@ -56,6 +57,7 @@ class PublicTaskSpec(CanaryModel):
     """The only task representation that may be injected into an Agent prompt."""
 
     id: str = Field(pattern=IDENTIFIER_PATTERN)
+    specification: str = Field(min_length=1)
     dtype: Literal["fp16", "bf16", "fp32"]
     reference_precision: Literal["fp32"] = "fp32"
     input_shapes: tuple[tuple[int, ...], ...] = Field(min_length=1)
@@ -70,6 +72,7 @@ class TaskPackSpec(CanaryModel):
 
     schema_version: Literal["canary-task-pack.v1"] = "canary-task-pack.v1"
     id: str = Field(pattern=IDENTIFIER_PATTERN)
+    specification: str = Field(min_length=1)
     source_path: str
     source_sha256: str = Field(pattern=SHA256_PATTERN)
     dtype: Literal["fp16", "bf16", "fp32"]
@@ -132,6 +135,7 @@ class TaskPackSpec(CanaryModel):
 
         return PublicTaskSpec(
             id=self.id,
+            specification=self.specification,
             dtype=self.dtype,
             reference_precision=self.reference_precision,
             input_shapes=self.input_shapes,
@@ -184,6 +188,14 @@ class TimingSpec(CanaryModel):
     trial_runs: int = Field(default=100, ge=1, le=10000)
     repetitions: int = Field(default=3, ge=1, le=20)
     max_cv: float = Field(default=0.05, gt=0, le=1)
+
+
+class AgentBudget(CanaryModel):
+    """Fixed resource guardrails for the synchronous rapid-study loop."""
+
+    max_calls: int = Field(default=4, ge=1, le=4)
+    max_completion_tokens_per_call: int = Field(default=8192, ge=256, le=65536)
+    max_wall_seconds: float = Field(default=1200.0, gt=0, le=86400)
 
 
 class WorkerJob(CanaryModel):
@@ -362,4 +374,48 @@ class WorkerResult(CanaryModel):
         if job.timing is not None and self.status == "completed":
             if len(self.timing_ms) != job.timing.trial_runs:
                 raise ValueError("worker timing sample count does not match the job")
+        return self
+
+
+class TrajectoryOutcome(CanaryModel):
+    """Terminal summary returned by the fixed four-turn Agent loop."""
+
+    schema_version: Literal["canary-trajectory-outcome.v1"] = (
+        "canary-trajectory-outcome.v1"
+    )
+    trajectory_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    status: Literal[
+        "finished",
+        "call_limit",
+        "budget_exhausted",
+        "provider_error",
+        "no_candidate",
+    ]
+    calls: int = Field(ge=0, le=4)
+    known_input_tokens: int = Field(default=0, ge=0)
+    known_output_tokens: int = Field(default=0, ge=0)
+    usage_complete: bool
+    first_candidate_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    final_candidate_sha256: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    dev_results: tuple[WorkerResult, ...] = ()
+    first_sealed_result: WorkerResult | None = None
+    final_sealed_result: WorkerResult | None = None
+    started_at_utc: datetime
+    finished_at_utc: datetime
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def terminal_summary_is_consistent(self) -> TrajectoryOutcome:
+        has_first = self.first_candidate_sha256 is not None
+        has_final = self.final_candidate_sha256 is not None
+        if has_first != has_final:
+            raise ValueError("first and final candidate hashes must appear together")
+        if self.status == "no_candidate" and has_first:
+            raise ValueError("no_candidate outcomes cannot contain candidate hashes")
+        if not has_first and (self.first_sealed_result or self.final_sealed_result):
+            raise ValueError("sealed results require first and final candidates")
+        if self.status == "provider_error" and not self.error:
+            raise ValueError("provider_error outcomes require an error message")
+        if self.finished_at_utc < self.started_at_utc:
+            raise ValueError("trajectory finish time cannot precede start time")
         return self

@@ -48,6 +48,11 @@ _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
     {
         "row-reduction-scale": TaskPackSpec(
             id="row-reduction-scale",
+            specification=(
+                "Given a contiguous FP16 tensor x with shape (1024, 1024), sum each row "
+                "using FP32 accumulation, multiply every row sum by 0.5, and return a "
+                "contiguous FP16 tensor with shape (1024,)."
+            ),
             source_path=_ROW_REDUCTION_SOURCE.relative_path,
             source_sha256=_ROW_REDUCTION_SOURCE.sha256,
             dtype="fp16",
