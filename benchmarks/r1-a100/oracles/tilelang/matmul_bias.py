@@ -1,0 +1,59 @@
+"""Trusted TileLang implementation for the static matmul-plus-bias canary."""
+
+import tilelang
+import tilelang.language as T
+import torch
+from torch import nn
+
+M = 256
+N = 256
+K = 256
+BLOCK_M = 64
+BLOCK_N = 64
+BLOCK_K = 32
+
+
+def _build_kernel():
+    @T.prim_func
+    def kernel(
+        a: T.Tensor((M, K), T.float16),
+        b: T.Tensor((K, N), T.float16),
+        bias: T.Tensor((N,), T.float16),
+        output: T.Tensor((M, N), T.float16),
+    ):
+        with T.Kernel(
+            T.ceildiv(N, BLOCK_N),
+            T.ceildiv(M, BLOCK_M),
+            threads=128,
+        ) as (block_n, block_m):
+            a_shared = T.alloc_shared((BLOCK_M, BLOCK_K), T.float16)
+            b_shared = T.alloc_shared((BLOCK_K, BLOCK_N), T.float16)
+            accumulator = T.alloc_fragment((BLOCK_M, BLOCK_N), T.float32)
+            T.clear(accumulator)
+
+            for block_k in T.Pipelined(T.ceildiv(K, BLOCK_K), num_stages=2):
+                T.copy(a[block_m * BLOCK_M, block_k * BLOCK_K], a_shared)
+                T.copy(b[block_k * BLOCK_K, block_n * BLOCK_N], b_shared)
+                T.gemm(a_shared, b_shared, accumulator)
+
+            for row, column in T.Parallel(BLOCK_M, BLOCK_N):
+                accumulator[row, column] += bias[block_n * BLOCK_N + column]
+            T.copy(accumulator, output[block_m * BLOCK_M, block_n * BLOCK_N])
+
+    return tilelang.compile(kernel, out_idx=3, target="cuda")
+
+
+class ModelNew(nn.Module):
+    """Shape-specialized trusted candidate; the evaluator owns validation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kernel = _build_kernel()
+
+    def forward(
+        self,
+        a: torch.Tensor,
+        b: torch.Tensor,
+        bias: torch.Tensor,
+    ) -> torch.Tensor:
+        return self.kernel(a, b, bias)

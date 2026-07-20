@@ -105,9 +105,12 @@ def test_validate_is_offline_and_reports_frozen_pair(capsys, monkeypatch) -> Non
     output = json.loads(capsys.readouterr().out)
     assert exit_code == cli.EXIT_OK
     assert output["status"] == "valid"
-    assert output["tasks"] == ["row-reduction-scale"]
-    assert output["targets"] == ["triton-a100"]
-    assert output["trusted_pairs"][0]["target_id"] == "triton-a100"
+    assert output["tasks"] == ["matmul-bias", "row-reduction-scale"]
+    assert output["targets"] == ["cute-a100", "tilelang-a100", "triton-a100"]
+    assert len(output["trusted_pairs"]) == 6
+    assert {pair["target_id"] for pair in output["trusted_pairs"]} == set(
+        output["targets"]
+    )
 
 
 def test_run_cell_guards_precede_config_auth_artifacts_and_network(capsys, monkeypatch) -> None:

@@ -43,6 +43,30 @@ _ROW_REDUCTION_TRITON_ORACLE = PinnedAsset(
     relative_path="oracles/triton/row_reduction_scale.py",
     sha256="037ec6d894daa9c59f01a43739fb18296a3c3aaf10d0946c5d07c04116f48fb8",
 )
+_ROW_REDUCTION_TILELANG_ORACLE = PinnedAsset(
+    relative_path="oracles/tilelang/row_reduction_scale.py",
+    sha256="f725e8dce6ccb192a0cc0f8c7b85a988807c9a7445ab2dcbfc92f92cd4978d2a",
+)
+_ROW_REDUCTION_CUTE_ORACLE = PinnedAsset(
+    relative_path="oracles/cute/row_reduction_scale.py",
+    sha256="b123d2ddee776b4a7dfd2cb4c375fb7acd29f4b9e79ea726bc6d51eb8e4fb390",
+)
+_MATMUL_BIAS_SOURCE = PinnedAsset(
+    relative_path="tasks/matmul_bias.py",
+    sha256="56c37bc614bbaca3c6e09d278960283c5c22726e8876026e7bedb6f063d561da",
+)
+_MATMUL_BIAS_TRITON_ORACLE = PinnedAsset(
+    relative_path="oracles/triton/matmul_bias.py",
+    sha256="ee2f018ab72ca51425d01762ba1a93008465225b6e4f81ea853cdc3281cf3aac",
+)
+_MATMUL_BIAS_TILELANG_ORACLE = PinnedAsset(
+    relative_path="oracles/tilelang/matmul_bias.py",
+    sha256="1f19050b78a01ea010b8dd488001b8d9924701d7f00d954a5b8d2352b620a16d",
+)
+_MATMUL_BIAS_CUTE_ORACLE = PinnedAsset(
+    relative_path="oracles/cute/matmul_bias.py",
+    sha256="948d6083215d7c472a77fbf42354b810f5b221a03cb24a9e8e8872c2baef685f",
+)
 
 _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
     {
@@ -83,7 +107,47 @@ _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
                     value=0.25,
                 ),
             ),
-        )
+        ),
+        "matmul-bias": TaskPackSpec(
+            id="matmul-bias",
+            specification=(
+                "Given contiguous FP16 tensors a, b, and bias with shapes (256, 256), "
+                "(256, 256), and (256,), compute a @ b using FP32 accumulation, add "
+                "the bias in FP32, and return a contiguous FP16 tensor with shape "
+                "(256, 256)."
+            ),
+            source_path=_MATMUL_BIAS_SOURCE.relative_path,
+            source_sha256=_MATMUL_BIAS_SOURCE.sha256,
+            dtype="fp16",
+            reference_precision="fp32",
+            input_shapes=((256, 256), (256, 256), (256,)),
+            parameters=(
+                ("m", 256),
+                ("n", 256),
+                ("k", 256),
+                ("epilogue", "bias"),
+                ("output_dtype", "fp16"),
+            ),
+            atol=1e-2,
+            rtol=1e-2,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=(
+                InputCaseSpec(id="dev-random-1", kind="random", seed=2026071901),
+                InputCaseSpec(id="dev-random-2", kind="random", seed=2026071902),
+            ),
+            sealed_cases=(
+                InputCaseSpec(id="sealed-random-1", kind="random", seed=2026072001),
+                InputCaseSpec(id="sealed-random-2", kind="random", seed=2026072002),
+                InputCaseSpec(id="sealed-random-3", kind="random", seed=2026072003),
+                InputCaseSpec(id="sealed-random-4", kind="random", seed=2026072004),
+                InputCaseSpec(
+                    id="sealed-constant",
+                    kind="constant",
+                    seed=2026072005,
+                    value=0.125,
+                ),
+            ),
+        ),
     }
 )
 
@@ -91,8 +155,24 @@ _TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
     {
         "row-reduction-scale": TaskAssets(
             source=_ROW_REDUCTION_SOURCE,
-            oracles=MappingProxyType({"triton": _ROW_REDUCTION_TRITON_ORACLE}),
-        )
+            oracles=MappingProxyType(
+                {
+                    "triton": _ROW_REDUCTION_TRITON_ORACLE,
+                    "tilelang": _ROW_REDUCTION_TILELANG_ORACLE,
+                    "cute": _ROW_REDUCTION_CUTE_ORACLE,
+                }
+            ),
+        ),
+        "matmul-bias": TaskAssets(
+            source=_MATMUL_BIAS_SOURCE,
+            oracles=MappingProxyType(
+                {
+                    "triton": _MATMUL_BIAS_TRITON_ORACLE,
+                    "tilelang": _MATMUL_BIAS_TILELANG_ORACLE,
+                    "cute": _MATMUL_BIAS_CUTE_ORACLE,
+                }
+            ),
+        ),
     }
 )
 

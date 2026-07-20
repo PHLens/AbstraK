@@ -33,6 +33,14 @@ _TRITON_CARD = TargetCardAsset(
     relative_path="targets/triton.md",
     sha256="7cf01f1aeb862d6eb648a56eda6c47875596c325ca940a20cba2703533b45631",
 )
+_TILELANG_CARD = TargetCardAsset(
+    relative_path="targets/tilelang.md",
+    sha256="c4788211172520d35c3fa4695ddfc532f66221642006f4d9325bab4543f33586",
+)
+_CUTE_CARD = TargetCardAsset(
+    relative_path="targets/cute.md",
+    sha256="83b023d0b8b7d7a816d28c4cb9dcb41f407aa89798b1deb13a9a890aae4034d1",
+)
 
 _TARGET_STACKS: Mapping[str, TargetStackSpec] = MappingProxyType(
     {
@@ -44,12 +52,34 @@ _TARGET_STACKS: Mapping[str, TargetStackSpec] = MappingProxyType(
             card_sha256=_TRITON_CARD.sha256,
             adapter="kernelbench",
             allowed_assets=(),
-        )
+        ),
+        "tilelang-a100": TargetStackSpec(
+            id="tilelang-a100",
+            backend="tilelang",
+            version="0.1.12",
+            card_path=_TILELANG_CARD.relative_path,
+            card_sha256=_TILELANG_CARD.sha256,
+            adapter="kernelbench",
+            allowed_assets=(),
+        ),
+        "cute-a100": TargetStackSpec(
+            id="cute-a100",
+            backend="cute",
+            version="4.6.1",
+            card_path=_CUTE_CARD.relative_path,
+            card_sha256=_CUTE_CARD.sha256,
+            adapter="kernelbench",
+            allowed_assets=(),
+        ),
     }
 )
 
 _TARGET_CARDS: Mapping[str, TargetCardAsset] = MappingProxyType(
-    {"triton-a100": _TRITON_CARD}
+    {
+        "triton-a100": _TRITON_CARD,
+        "tilelang-a100": _TILELANG_CARD,
+        "cute-a100": _CUTE_CARD,
+    }
 )
 
 

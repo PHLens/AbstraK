@@ -22,7 +22,7 @@ from abstrak.canary.tasks import (
 def test_row_reduction_task_pack_freezes_cases_and_semantics() -> None:
     task = get_task_pack("row-reduction-scale")
 
-    assert list_task_ids() == ("row-reduction-scale",)
+    assert list_task_ids() == ("matmul-bias", "row-reduction-scale")
     assert task.dtype == "fp16"
     assert "sum each row" in task.specification
     assert task.reference_precision == "fp32"
@@ -60,12 +60,28 @@ def test_registered_task_and_oracle_are_hash_verified() -> None:
     assert "class ModelNew" in oracle_source
     assert "values.to(tl.float32)" in oracle_source
 
+    for task_id in list_task_ids():
+        for backend in ("triton", "tilelang", "cute"):
+            assert "class ModelNew" in load_oracle_source(task_id, backend)
+
+
+def test_matmul_bias_task_pack_freezes_cases_and_semantics() -> None:
+    task = get_task_pack("matmul-bias")
+
+    assert task.input_shapes == ((256, 256), (256, 256), (256,))
+    assert task.parameter_map["epilogue"] == "bias"
+    assert task.reference_precision == "fp32"
+    assert len(task.dev_cases) == 2
+    assert len(task.sealed_cases) == 5
+    assert task.sealed_cases[-1].kind == "constant"
+    assert task.sealed_cases[-1].value == 0.125
+
 
 def test_unknown_task_and_oracle_are_rejected() -> None:
     with pytest.raises(TaskRegistryError, match="unknown task pack"):
         get_task_pack("missing")
-    with pytest.raises(TaskRegistryError, match="no tilelang oracle"):
-        load_oracle_source("row-reduction-scale", "tilelang")
+    with pytest.raises(TaskRegistryError, match="no cuda oracle"):
+        load_oracle_source("row-reduction-scale", "cuda")
 
 
 def test_pinned_asset_rejects_parent_traversal(tmp_path: Path) -> None:
