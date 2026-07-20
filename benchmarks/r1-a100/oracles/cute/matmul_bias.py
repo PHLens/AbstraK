@@ -17,9 +17,9 @@ def _matmul_bias_kernel(
     b: cute.Tensor,
     bias: cute.Tensor,
     output: cute.Tensor,
-    m_size: int,
-    n_size: int,
-    k_size: int,
+    m_size: cutlass.Int32,
+    n_size: cutlass.Int32,
+    k_size: cutlass.Int32,
 ):
     thread, _, _ = cute.arch.thread_idx()
     block, _, _ = cute.arch.block_idx()
@@ -43,9 +43,9 @@ def _launch_matmul_bias(
     b: cute.Tensor,
     bias: cute.Tensor,
     output: cute.Tensor,
-    m_size: int,
-    n_size: int,
-    k_size: int,
+    m_size: cutlass.Int32,
+    n_size: cutlass.Int32,
+    k_size: cutlass.Int32,
 ):
     threads = 256
     blocks = cute.ceil_div(m_size * n_size, threads)
@@ -73,6 +73,9 @@ class ModelNew(nn.Module):
         cute_b = from_dlpack(b, assumed_align=16)
         cute_bias = from_dlpack(bias, assumed_align=16)
         cute_output = from_dlpack(output, assumed_align=16)
+        m_size = cutlass.Int32(M)
+        n_size = cutlass.Int32(N)
+        k_size = cutlass.Int32(K)
         if self.compiled is None:
             self.compiled = cute.compile(
                 _launch_matmul_bias,
@@ -80,9 +83,9 @@ class ModelNew(nn.Module):
                 cute_b,
                 cute_bias,
                 cute_output,
-                M,
-                N,
-                K,
+                m_size,
+                n_size,
+                k_size,
             )
-        self.compiled(cute_a, cute_b, cute_bias, cute_output, M, N, K)
+        self.compiled(cute_a, cute_b, cute_bias, cute_output, m_size, n_size, k_size)
         return output

@@ -15,8 +15,8 @@ SCALE = 0.5
 def _row_reduction_scale_kernel(
     x: cute.Tensor,
     output: cute.Tensor,
-    columns: int,
-    scale: float,
+    columns: cutlass.Int32,
+    scale: cutlass.Float32,
 ):
     thread, _, _ = cute.arch.thread_idx()
     row, _, _ = cute.arch.block_idx()
@@ -31,8 +31,8 @@ def _row_reduction_scale_kernel(
 def _launch_row_reduction_scale(
     x: cute.Tensor,
     output: cute.Tensor,
-    columns: int,
-    scale: float,
+    columns: cutlass.Int32,
+    scale: cutlass.Float32,
 ):
     _row_reduction_scale_kernel(x, output, columns, scale).launch(
         grid=(x.shape[0], 1, 1),
@@ -51,13 +51,15 @@ class ModelNew(nn.Module):
         output = torch.empty((ROWS,), dtype=torch.float16, device=x.device)
         cute_x = from_dlpack(x, assumed_align=16)
         cute_output = from_dlpack(output, assumed_align=16)
+        columns = cutlass.Int32(COLUMNS)
+        scale = cutlass.Float32(SCALE)
         if self.compiled is None:
             self.compiled = cute.compile(
                 _launch_row_reduction_scale,
                 cute_x,
                 cute_output,
-                COLUMNS,
-                SCALE,
+                columns,
+                scale,
             )
-        self.compiled(cute_x, cute_output, COLUMNS, SCALE)
+        self.compiled(cute_x, cute_output, columns, scale)
         return output

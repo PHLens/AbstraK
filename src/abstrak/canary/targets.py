@@ -39,7 +39,7 @@ _TILELANG_CARD = TargetCardAsset(
 )
 _CUTE_CARD = TargetCardAsset(
     relative_path="targets/cute.md",
-    sha256="83b023d0b8b7d7a816d28c4cb9dcb41f407aa89798b1deb13a9a890aae4034d1",
+    sha256="2419ee0373e8c86ec64581130b3c4cdcd1ba67f5468d734ea0c2eb160d9a8fed",
 )
 
 _TARGET_STACKS: Mapping[str, TargetStackSpec] = MappingProxyType(

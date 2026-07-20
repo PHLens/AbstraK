@@ -49,7 +49,7 @@ _ROW_REDUCTION_TILELANG_ORACLE = PinnedAsset(
 )
 _ROW_REDUCTION_CUTE_ORACLE = PinnedAsset(
     relative_path="oracles/cute/row_reduction_scale.py",
-    sha256="b123d2ddee776b4a7dfd2cb4c375fb7acd29f4b9e79ea726bc6d51eb8e4fb390",
+    sha256="c7fa2a82fde0ac5191f16ddd867bbc7c35656b413cb983e47811bdabab2466d8",
 )
 _MATMUL_BIAS_SOURCE = PinnedAsset(
     relative_path="tasks/matmul_bias.py",
@@ -65,7 +65,7 @@ _MATMUL_BIAS_TILELANG_ORACLE = PinnedAsset(
 )
 _MATMUL_BIAS_CUTE_ORACLE = PinnedAsset(
     relative_path="oracles/cute/matmul_bias.py",
-    sha256="948d6083215d7c472a77fbf42354b810f5b221a03cb24a9e8e8872c2baef685f",
+    sha256="ff67983fd0a66b37105821491db87a8fe9288921a9b4f14e6de9bb3b9043ae23",
 )
 
 _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(

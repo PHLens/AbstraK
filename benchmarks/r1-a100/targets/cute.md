@@ -51,7 +51,12 @@ from torch import nn
 
 
 @cute.kernel
-def _vector_add_kernel(x: cute.Tensor, y: cute.Tensor, output: cute.Tensor, length: int):
+def _vector_add_kernel(
+    x: cute.Tensor,
+    y: cute.Tensor,
+    output: cute.Tensor,
+    length: cutlass.Int32,
+):
     thread, _, _ = cute.arch.thread_idx()
     block, _, _ = cute.arch.block_idx()
     block_size, _, _ = cute.arch.block_dim()
@@ -65,7 +70,7 @@ def _launch_vector_add(
     x: cute.Tensor,
     y: cute.Tensor,
     output: cute.Tensor,
-    length: int,
+    length: cutlass.Int32,
 ):
     threads = 256
     _vector_add_kernel(x, y, output, length).launch(
@@ -84,7 +89,7 @@ class ModelNew(nn.Module):
         cute_x = from_dlpack(x, assumed_align=16)
         cute_y = from_dlpack(y, assumed_align=16)
         cute_output = from_dlpack(output, assumed_align=16)
-        length = x.numel()
+        length = cutlass.Int32(x.numel())
         if self.compiled is None:
             self.compiled = cute.compile(
                 _launch_vector_add,
