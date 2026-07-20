@@ -19,6 +19,7 @@ Create the local configuration described in `configs/README.md`, then run:
 uv sync
 uv run abstrak-doctor
 uv run abstrak-provider validate
+uv run abstrak-canary validate
 uv run pytest
 uv run ruff check .
 ```
@@ -92,3 +93,31 @@ uv run abstrak-kernelbench validate \
   --study configs/studies/kernelbench-naive-smoke.yaml \
   --kernelbench-root /path/to/KernelBench
 ```
+
+The first R1 canary vertical slice can execute a hash-bound trusted oracle on
+an SSH A100 worker before any model request:
+
+```bash
+uv run abstrak-canary run-trusted \
+  --ssh-host <a100-host> \
+  --worker-root /path/to/AbstraK
+```
+
+After that bundle passes, one supervised four-turn trajectory uses the same
+worker transport:
+
+```bash
+uv run abstrak-canary run-cell \
+  --ssh-host <a100-host> \
+  --worker-root /path/to/AbstraK \
+  --profile deepseek-v4-flash \
+  --expected-max-requests 4 \
+  --live
+```
+
+`run-cell` executes model-generated Python and therefore only accepts the SSH
+worker path. Each job runs under bubblewrap with no network, a read-only root,
+temporary home/cache paths, a cleared environment, remote and controller
+timeouts, GPU health quarantine, and A100/SM80 checks. This remains a
+supervised canary rather than an adversarial security boundary; formal runs
+must use a dedicated worker and independently verify its bubblewrap policy.

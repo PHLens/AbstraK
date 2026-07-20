@@ -24,5 +24,6 @@ source "$ABSTRAK_GPU_VENV/bin/activate"
 abstrak-doctor() { python -m abstrak.doctor "$@"; }
 abstrak-kernelbench() { python -m abstrak.evaluation.cli "$@"; }
 abstrak-provider() { python -m abstrak.providers.cli "$@"; }
+abstrak-canary() { python -m abstrak.canary.cli "$@"; }
 
 cd "$ABSTRAK_ROOT"

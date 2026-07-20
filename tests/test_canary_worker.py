@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import os
 import subprocess
 import sys
 
 import pytest
 from pydantic import ValidationError
 
+import abstrak.canary.worker as worker_module
 from abstrak.canary.contracts import CaseResult, WorkerJob, WorkerResult
 from abstrak.canary.targets import get_target_stack
 from abstrak.canary.tasks import get_task_pack, load_oracle_source
 from abstrak.canary.worker import load_job_payload, run_worker_job
+from abstrak.canary.worker import main as worker_main
 
 
 def _job() -> WorkerJob:
@@ -71,6 +75,74 @@ def test_worker_job_json_rejects_candidate_tampering() -> None:
         load_job_payload(json.dumps(payload))
 
 
+def test_worker_cli_rejects_device_override_that_differs_from_job(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    job = _job()
+    monkeypatch.setattr(sys, "stdin", io.StringIO(job.model_dump_json()))
+
+    status = worker_main(
+        [
+            "--job",
+            "-",
+            "--kernelbench-root",
+            "/unused",
+            "--device",
+            "cuda:1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert status == 2
+    assert captured.out == ""
+    assert "does not match job.device 'cuda:0'" in captured.err
+
+
+def test_worker_health_check_emits_one_json_value_and_uses_default_device(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: list[str] = []
+
+    def fake_health(device: str) -> dict[str, object]:
+        observed.append(device)
+        return {
+            "schema_version": "canary-worker-health.v1",
+            "status": "healthy",
+            "device": device,
+            "hardware": "Fake A100",
+            "compute_capability": [8, 0],
+            "python_version": "3.10.20",
+            "torch_version": "2.13.0+cu126",
+            "torch_cuda_version": "12.6",
+            "triton_version": "3.7.1",
+            "value": 2.0,
+        }
+
+    monkeypatch.setattr(worker_module, "gpu_health", fake_health)
+
+    status = worker_main(["--health-check"])
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert observed == ["cuda:0"]
+    assert json.loads(captured.out) == {
+        "schema_version": "canary-worker-health.v1",
+        "status": "healthy",
+        "device": "cuda:0",
+        "hardware": "Fake A100",
+        "compute_capability": [8, 0],
+        "python_version": "3.10.20",
+        "torch_version": "2.13.0+cu126",
+        "torch_cuda_version": "12.6",
+        "triton_version": "3.7.1",
+        "value": 2.0,
+    }
+    assert captured.out.count("\n") == 1
+    assert captured.err == ""
+
+
 def test_importing_worker_does_not_import_torch() -> None:
     process = subprocess.run(
         [
@@ -85,3 +157,46 @@ def test_importing_worker_does_not_import_torch() -> None:
     )
 
     assert process.returncode == 0, process.stderr
+
+
+def test_worker_uses_ephemeral_scrubbed_environment_and_restores_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job()
+    original_directory = os.getcwd()
+    monkeypatch.setenv("TEST_API_KEY", "must-not-reach-worker")
+    monkeypatch.setenv("TEST_BASE_URL", "https://must-not-reach-worker.invalid/secret")
+
+    def fake_evaluator(candidate_job: WorkerJob, _root: object, **_kwargs: object) -> WorkerResult:
+        assert "TEST_API_KEY" not in os.environ
+        assert "TEST_BASE_URL" not in os.environ
+        assert os.environ["HOME"].startswith("/tmp/abstrak-")
+        assert os.getcwd() == os.environ["HOME"]
+        cases = tuple(
+            CaseResult(
+                case_id=case_id,
+                status="pass",
+                correct=True,
+                max_abs_error=0.0,
+                max_rel_error=0.0,
+                output_finite=True,
+                inputs_unchanged=True,
+            )
+            for case_id in candidate_job.case_ids
+        )
+        return WorkerResult(
+            job_id=candidate_job.job_id,
+            job_sha256=candidate_job.sha256,
+            input_sha256=candidate_job.input_sha256,
+            candidate_sha256=candidate_job.candidate_sha256,
+            status="completed",
+            compiled=True,
+            correct=True,
+            cases=cases,
+        )
+
+    run_worker_job(job, kernelbench_root="/unused", evaluator=fake_evaluator)
+
+    assert os.getcwd() == original_directory
+    assert os.environ["TEST_API_KEY"] == "must-not-reach-worker"
+    assert os.environ["TEST_BASE_URL"].endswith("/secret")

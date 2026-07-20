@@ -29,6 +29,7 @@ gpu = [
 ]
 
 [project.scripts]
+abstrak-canary = "abstrak.canary.cli:main"
 abstrak-doctor = "abstrak.doctor:main"
 abstrak-kernelbench = "abstrak.evaluation.cli:main"
 abstrak-provider = "abstrak.providers.cli:main"

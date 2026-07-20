@@ -389,6 +389,7 @@ class TrajectoryOutcome(CanaryModel):
         "call_limit",
         "budget_exhausted",
         "provider_error",
+        "worker_error",
         "no_candidate",
     ]
     calls: int = Field(ge=0, le=4)
@@ -414,8 +415,8 @@ class TrajectoryOutcome(CanaryModel):
             raise ValueError("no_candidate outcomes cannot contain candidate hashes")
         if not has_first and (self.first_sealed_result or self.final_sealed_result):
             raise ValueError("sealed results require first and final candidates")
-        if self.status == "provider_error" and not self.error:
-            raise ValueError("provider_error outcomes require an error message")
+        if self.status in {"provider_error", "worker_error"} and not self.error:
+            raise ValueError(f"{self.status} outcomes require an error message")
         if self.finished_at_utc < self.started_at_utc:
             raise ValueError("trajectory finish time cannot precede start time")
         return self

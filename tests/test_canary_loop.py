@@ -136,6 +136,23 @@ class FakeWorker:
         )
 
 
+class FailingWorker:
+    def __init__(self) -> None:
+        self.jobs: list[WorkerJob] = []
+
+    def execute(self, job: WorkerJob) -> WorkerResult:
+        self.jobs.append(job)
+        raise RuntimeError("GPU worker unavailable")
+
+
+class SealedFailingWorker(FakeWorker):
+    def execute(self, job: WorkerJob) -> WorkerResult:
+        if job.kind == "sealed":
+            self.jobs.append(job)
+            raise RuntimeError("sealed worker unavailable")
+        return super().execute(job)
+
+
 def _loop(tmp_path: Path, responses: list[str]) -> tuple[CanaryAgentLoop, FakeClient, FakeWorker]:
     client = FakeClient(responses)
     worker = FakeWorker()
@@ -238,3 +255,67 @@ def test_provider_error_is_terminal_without_retry_and_still_seals_candidate(
     assert len(client.requests) == 2
     assert outcome.error and "network unavailable" in outcome.error
     assert [job.kind for job in worker.jobs] == ["dev", "sealed", "sealed"]
+
+
+def test_worker_infrastructure_failure_stops_further_provider_calls(tmp_path: Path) -> None:
+    client = FakeClient(
+        [_candidate("first", "CONTINUE"), _candidate("must-not-run", "FINISH")]
+    )
+    worker = FailingWorker()
+    loop = CanaryAgentLoop(
+        client=client,
+        worker=worker,
+        store=TrajectoryStore.create(tmp_path, "study", "trajectory"),
+    )
+
+    outcome = _run(loop)
+
+    assert outcome.status == "worker_error"
+    assert outcome.calls == 1
+    assert len(client.requests) == 1
+    assert [job.kind for job in worker.jobs] == ["dev"]
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_sealed_worker_failure_overrides_finished_status_and_stops_sealed_jobs(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient([_candidate("good", "FINISH")])
+    worker = SealedFailingWorker()
+    loop = CanaryAgentLoop(
+        client=client,
+        worker=worker,
+        store=TrajectoryStore.create(tmp_path, "study", "trajectory"),
+    )
+
+    outcome = _run(loop)
+
+    assert outcome.status == "worker_error"
+    assert outcome.error and "sealed worker unavailable" in outcome.error
+    assert outcome.first_sealed_result is not None
+    assert outcome.first_sealed_result.status == "worker_error"
+    assert outcome.final_sealed_result is None
+    assert [job.kind for job in worker.jobs] == ["dev", "sealed"]
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_provider_response_past_wall_budget_stops_before_candidate_execution(
+    tmp_path: Path,
+) -> None:
+    ticks = iter((0.0, 0.0, 1201.0))
+    client = FakeClient([_candidate("good", "FINISH")])
+    worker = FakeWorker()
+    loop = CanaryAgentLoop(
+        client=client,
+        worker=worker,
+        store=TrajectoryStore.create(tmp_path, "study", "trajectory"),
+        monotonic=lambda: next(ticks),
+    )
+
+    outcome = _run(loop)
+
+    assert outcome.status == "budget_exhausted"
+    assert outcome.calls == 1
+    assert outcome.first_candidate_sha256 is None
+    assert worker.jobs == []
+    verify_trajectory(loop.store.run_directory)

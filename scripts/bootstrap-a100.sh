@@ -16,6 +16,8 @@ EXPECTED_WHEELHOUSE_SHA256="ae644076dd76cd3ed8e47931e1ca4bc044881e244024556a1cb4
 export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-$VOLUME_ROOT/.uv/python}"
 command -v uv >/dev/null || { echo "uv is required" >&2; exit 1; }
 command -v git >/dev/null || { echo "git is required in PATH" >&2; exit 1; }
+command -v bwrap >/dev/null || { echo "bubblewrap is required in PATH" >&2; exit 1; }
+command -v timeout >/dev/null || { echo "GNU timeout is required in PATH" >&2; exit 1; }
 test -d "$ABSTRAK_ROOT/.git" || { echo "missing AbstraK checkout" >&2; exit 1; }
 test -d "$KERNELBENCH_ROOT/.git" || { echo "missing KernelBench checkout" >&2; exit 1; }
 

@@ -52,12 +52,14 @@ def _candidate_hash(source: str) -> str:
 
 
 def _worker_failure(job: WorkerJob, error: Exception) -> WorkerResult:
+    health = getattr(error, "health", None)
     return WorkerResult(
         job_id=job.job_id,
         job_sha256=job.sha256,
         input_sha256=job.input_sha256,
         candidate_sha256=job.candidate_sha256,
         status="worker_error",
+        metadata={"post_job_gpu_health": health} if health is not None else {},
         error=f"{type(error).__name__}: {error}",
     )
 
@@ -180,6 +182,15 @@ class CanaryAgentLoop:
             usage_complete = usage_complete and usage.core_fields_complete
             history.append(ChatMessage(role=MessageRole.ASSISTANT, content=response.text))
             self._event("response_received", turn_index, response)
+            if self.monotonic() - started_clock >= budget.max_wall_seconds:
+                terminal_status = "budget_exhausted"
+                self.store.write_turn(turn_index, request=request, response=response)
+                self._event(
+                    "budget_exhausted",
+                    turn_index,
+                    {"phase": "provider_response"},
+                )
+                break
             try:
                 action = parse_agent_action(response.text)
             except AgentProtocolError as error:
@@ -219,6 +230,23 @@ class CanaryAgentLoop:
                 worker_result=dev_result,
             )
             self._event("dev_finished", turn_index, dev_result)
+            if dev_result.status in {"environment_error", "worker_error"}:
+                terminal_status = "worker_error"
+                terminal_error = dev_result.error
+                self._event(
+                    "worker_terminal",
+                    turn_index,
+                    {"status": dev_result.status, "error": dev_result.error},
+                )
+                break
+            if self.monotonic() - started_clock >= budget.max_wall_seconds:
+                terminal_status = "budget_exhausted"
+                self._event(
+                    "budget_exhausted",
+                    turn_index,
+                    {"phase": "dev_result"},
+                )
+                break
             if action.decision == "finish":
                 terminal_status = "finished"
                 self._event("agent_finished", turn_index, {"candidate_sha256": final_hash})
@@ -235,6 +263,15 @@ class CanaryAgentLoop:
                 terminal_status = "no_candidate"
             first_sealed = None
             final_sealed = None
+        elif terminal_status == "worker_error":
+            self.store.snapshot_candidate("final", final_source, final_hash)
+            first_sealed = None
+            final_sealed = None
+            self._event(
+                "sealed_skipped",
+                None,
+                {"reason": "worker infrastructure is unavailable"},
+            )
         else:
             self.store.snapshot_candidate("final", final_source, final_hash)
             first_job = self._job(
@@ -250,20 +287,34 @@ class CanaryAgentLoop:
             first_sealed = self._execute(first_job)
             self.store.write_sealed("first", first_job, first_sealed)
             self._event("sealed_finished", None, {"label": "first", "result": first_sealed})
-
-            final_job = self._job(
-                trajectory_id=trajectory_id,
-                label="final",
-                kind="sealed",
-                source=final_source,
-                task=task,
-                target=target,
-                timing=None,
-                device=device,
-            )
-            final_sealed = self._execute(final_job)
-            self.store.write_sealed("final", final_job, final_sealed)
-            self._event("sealed_finished", None, {"label": "final", "result": final_sealed})
+            if first_sealed.status in {"environment_error", "worker_error"}:
+                if terminal_status != "provider_error":
+                    terminal_status = "worker_error"
+                    terminal_error = first_sealed.error
+                final_sealed = None
+                self._event(
+                    "sealed_skipped",
+                    None,
+                    {"label": "final", "reason": "worker infrastructure is unavailable"},
+                )
+            else:
+                final_job = self._job(
+                    trajectory_id=trajectory_id,
+                    label="final",
+                    kind="sealed",
+                    source=final_source,
+                    task=task,
+                    target=target,
+                    timing=None,
+                    device=device,
+                )
+                final_sealed = self._execute(final_job)
+                self.store.write_sealed("final", final_job, final_sealed)
+                self._event("sealed_finished", None, {"label": "final", "result": final_sealed})
+                if final_sealed.status in {"environment_error", "worker_error"}:
+                    if terminal_status != "provider_error":
+                        terminal_status = "worker_error"
+                        terminal_error = final_sealed.error
 
         outcome = TrajectoryOutcome(
             trajectory_id=trajectory_id,
