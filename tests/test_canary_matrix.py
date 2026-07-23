@@ -77,6 +77,8 @@ def test_infrastructure_retry_does_not_inflate_scientific_request_ceiling() -> N
 
     assert all(phase.infrastructure_retries == 1 for phase in spec.phases)
     assert spec.request_ceiling == 288
+    assert spec.phase_operational_request_ceiling("core") == 288
+    assert spec.operational_request_ceiling == 576
 
 
 @pytest.mark.parametrize(

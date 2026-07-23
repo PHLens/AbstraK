@@ -1,0 +1,116 @@
+{
+  "schema_version": "abstrak-matrix-study-spec.v1",
+  "study_id": "tilelang-capability-gate-a100-v1",
+  "seed": 20260723,
+  "agents": [
+    "deepseek-v4-pro"
+  ],
+  "targets": [
+    "tilelang-a100-core",
+    "tilelang-a100-sched",
+    "tilelang-a100-map",
+    "tilelang-a100-full"
+  ],
+  "task_groups": [
+    {
+      "id": "base-simple",
+      "task_ids": [
+        "gelu-static",
+        "gated-silu-static"
+      ]
+    },
+    {
+      "id": "schedule",
+      "task_ids": [
+        "gemm-large-k-static",
+        "gemm-bias-relu-mirror-static"
+      ]
+    },
+    {
+      "id": "mapping",
+      "task_ids": [
+        "gemm-small-k-irregular-static",
+        "row-sum-static"
+      ]
+    },
+    {
+      "id": "schedule-mapping-interaction",
+      "task_ids": [
+        "row-softmax-static",
+        "rmsnorm-wide-static"
+      ]
+    }
+  ],
+  "phases": [
+    {
+      "id": "core",
+      "task_ids": [
+        "gelu-static",
+        "gemm-large-k-static",
+        "gemm-small-k-irregular-static",
+        "row-softmax-static"
+      ],
+      "replicates": [
+        1,
+        2,
+        3
+      ],
+      "order_policy": "balanced_rotation",
+      "max_calls_per_trajectory": 3,
+      "infrastructure_retries": 1
+    },
+    {
+      "id": "reserve",
+      "task_ids": [
+        "gated-silu-static",
+        "gemm-bias-relu-mirror-static",
+        "row-sum-static",
+        "rmsnorm-wide-static"
+      ],
+      "replicates": [
+        1,
+        2,
+        3
+      ],
+      "order_policy": "balanced_rotation",
+      "max_calls_per_trajectory": 3,
+      "infrastructure_retries": 1
+    }
+  ],
+  "gate": {
+    "core_phase_id": "core",
+    "reserve_phase_id": "reserve",
+    "metrics": {
+      "competitive_latency_factor": 1.25,
+      "latency_tie_fraction": 0.1,
+      "max_timing_cv": 0.05
+    },
+    "core": {
+      "min_stable_tasks": 3,
+      "min_unique_winner_groups": 2,
+      "min_competitive_gap_units": 3,
+      "min_latency_gain_tasks": 2,
+      "min_latency_regret": 0.1,
+      "no_go_max_competitive_gap_units": 1,
+      "no_go_max_latency_regret": 0.05,
+      "require_zero_stable_gap_for_no_go": true,
+      "require_common_winner_for_no_go": true
+    },
+    "full": {
+      "min_stable_tasks": 6,
+      "min_competitive_gap_units": 3,
+      "min_latency_regret": 0.1,
+      "min_opportunity_tasks": 2,
+      "min_opportunity_groups": 2,
+      "min_unique_winner_targets": 2,
+      "dominant_winner_min_tasks": 7,
+      "no_go_max_competitive_gap_units": 1,
+      "no_go_max_latency_regret": 0.05,
+      "require_zero_stable_gap_for_no_go": true
+    },
+    "reserve_on_outcomes": [
+      "provisional_go",
+      "inconclusive"
+    ]
+  }
+}

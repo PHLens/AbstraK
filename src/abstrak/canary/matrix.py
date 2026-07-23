@@ -275,7 +275,15 @@ class MatrixStudySpec(CanaryModel):
 
     @property
     def request_ceiling(self) -> int:
+        """Return the scientific Agent-call ceiling, excluding infrastructure retries."""
+
         return sum(self.phase_request_ceiling(phase.id) for phase in self.phases)
+
+    @property
+    def operational_request_ceiling(self) -> int:
+        """Return the worst-case Agent-call ceiling including infrastructure retries."""
+
+        return sum(self.phase_operational_request_ceiling(phase.id) for phase in self.phases)
 
     def phase(self, phase_id: str) -> PhaseSpec:
         try:
@@ -290,6 +298,10 @@ class MatrixStudySpec(CanaryModel):
     def phase_request_ceiling(self, phase_id: str) -> int:
         phase = self.phase(phase_id)
         return self.phase_trajectory_count(phase_id) * phase.max_calls_per_trajectory
+
+    def phase_operational_request_ceiling(self, phase_id: str) -> int:
+        phase = self.phase(phase_id)
+        return self.phase_request_ceiling(phase_id) * (1 + phase.infrastructure_retries)
 
     def groups_for_tasks(self, task_ids: tuple[str, ...]) -> tuple[str, ...]:
         requested = set(task_ids)
@@ -363,12 +375,19 @@ class MatrixSchedule(CanaryModel):
     def request_ceiling(self) -> int:
         return self.spec.request_ceiling
 
+    @property
+    def operational_request_ceiling(self) -> int:
+        return self.spec.operational_request_ceiling
+
     def cells_for_phase(self, phase_id: str) -> tuple[MatrixCell, ...]:
         self.spec.phase(phase_id)
         return tuple(cell for cell in self.cells if cell.phase_id == phase_id)
 
     def phase_request_ceiling(self, phase_id: str) -> int:
         return self.spec.phase_request_ceiling(phase_id)
+
+    def phase_operational_request_ceiling(self, phase_id: str) -> int:
+        return self.spec.phase_operational_request_ceiling(phase_id)
 
 
 def _phase_seed(seed: int, phase_id: str) -> int:

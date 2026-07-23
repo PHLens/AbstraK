@@ -7,9 +7,20 @@ from pathlib import Path
 
 import pytest
 
+import abstrak.canary.targets as target_registry
+from abstrak.canary.capabilities import (
+    CORE_PACK,
+    FULL_PACK,
+    MAP_PACK,
+    SCHED_PACK,
+    render_tilelang_target_card,
+)
 from abstrak.canary.targets import (
+    CAPABILITY_GATE_SCOPE,
+    R1_SCOPE,
     TargetCardAsset,
     TargetRegistryError,
+    get_target_card_asset,
     get_target_stack,
     list_target_ids,
     load_pinned_card,
@@ -22,6 +33,13 @@ def test_triton_target_stack_is_frozen_for_a100() -> None:
     target = get_target_stack("triton-a100")
 
     assert list_target_ids() == ("cute-a100", "tilelang-a100", "triton-a100")
+    assert list_target_ids(scope=R1_SCOPE) == list_target_ids()
+    assert list_target_ids(scope=CAPABILITY_GATE_SCOPE) == (
+        "tilelang-a100-core",
+        "tilelang-a100-full",
+        "tilelang-a100-map",
+        "tilelang-a100-sched",
+    )
     assert target.backend == "triton"
     assert target.version == "3.7.1"
     assert target.adapter == "kernelbench"
@@ -67,6 +85,92 @@ def test_unknown_target_is_rejected() -> None:
         load_target_card("missing")
 
 
+def test_unknown_target_registry_scope_is_rejected() -> None:
+    with pytest.raises(TargetRegistryError, match="unknown target registry scope: missing"):
+        list_target_ids(scope="missing")
+    with pytest.raises(TargetRegistryError, match="unknown target registry scope: missing"):
+        validate_target_registry(scope="missing")
+
+
+def test_registry_validation_is_isolated_by_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    loaded_paths: list[str] = []
+    loaded_roots: list[Path] = []
+
+    def record_load(card: TargetCardAsset, *, asset_root: object = None) -> str:
+        loaded_paths.append(card.relative_path)
+        assert isinstance(asset_root, Path)
+        loaded_roots.append(asset_root)
+        return "card"
+
+    monkeypatch.setattr(target_registry, "load_pinned_card", record_load)
+
+    validate_target_registry(scope=CAPABILITY_GATE_SCOPE)
+    assert loaded_paths == [
+        "targets/core.md",
+        "targets/full.md",
+        "targets/map.md",
+        "targets/sched.md",
+    ]
+    assert {root.name for root in loaded_roots} == {"capability-gate-a100"}
+
+    loaded_paths.clear()
+    loaded_roots.clear()
+    validate_target_registry()
+    assert loaded_paths == ["targets/cute.md", "targets/tilelang.md", "targets/triton.md"]
+    assert {root.name for root in loaded_roots} == {"r1-a100"}
+
+
+def test_capability_targets_bind_machine_rendered_cards_and_adapters() -> None:
+    validate_target_registry(scope=CAPABILITY_GATE_SCOPE)
+    for pack in (CORE_PACK, SCHED_PACK, MAP_PACK, FULL_PACK):
+        target = get_target_stack(pack.target_id)
+        card = load_target_card(pack.target_id)
+
+        assert target.backend == "tilelang"
+        assert target.version == "0.1.12"
+        assert target.adapter == pack.adapter_id
+        assert target.allowed_assets == ()
+        assert card == render_tilelang_target_card(pack)
+
+
+def test_global_lookup_indexes_targets_from_every_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = get_target_stack("triton-a100").model_copy(update={"id": "capability-only"})
+    card = get_target_card_asset("triton-a100")
+    stacks, cards = target_registry._build_global_indexes(
+        {
+            R1_SCOPE: target_registry._TargetRegistryScope(stacks={}, cards={}),
+            CAPABILITY_GATE_SCOPE: target_registry._TargetRegistryScope(
+                stacks={"capability-only": target},
+                cards={"capability-only": card},
+            ),
+        }
+    )
+    monkeypatch.setattr(target_registry, "_TARGET_STACKS", stacks)
+    monkeypatch.setattr(target_registry, "_TARGET_CARDS", cards)
+
+    assert get_target_stack("capability-only").id == "capability-only"
+    assert get_target_card_asset("capability-only") == card
+
+
+def test_global_target_ids_must_be_unique_across_scopes() -> None:
+    target = get_target_stack("triton-a100")
+    card = get_target_card_asset("triton-a100")
+    duplicate = target_registry._TargetRegistryScope(
+        stacks={target.id: target},
+        cards={target.id: card},
+    )
+
+    with pytest.raises(TargetRegistryError, match="registered in multiple scopes: triton-a100"):
+        target_registry._build_global_indexes(
+            {
+                R1_SCOPE: duplicate,
+                CAPABILITY_GATE_SCOPE: duplicate,
+            }
+        )
+
+
 def test_pinned_card_rejects_parent_traversal(tmp_path: Path) -> None:
     root = tmp_path / "assets"
     root.mkdir()
@@ -81,9 +185,7 @@ def test_pinned_card_rejects_parent_traversal(tmp_path: Path) -> None:
 def test_target_registry_rejects_card_tampering(tmp_path: Path) -> None:
     target_directory = tmp_path / "targets"
     target_directory.mkdir()
-    (target_directory / "cute.md").write_text(
-        load_target_card("cute-a100"), encoding="utf-8"
-    )
+    (target_directory / "cute.md").write_text(load_target_card("cute-a100"), encoding="utf-8")
     (target_directory / "tilelang.md").write_text(
         load_target_card("tilelang-a100"), encoding="utf-8"
     )

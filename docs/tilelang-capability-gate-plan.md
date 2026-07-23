@@ -167,6 +167,10 @@ adapter dispatch 复用 v1 `WorkerJob/WorkerResult` wire schema；pack violation
 `static_check_failed` 和稳定 error code 表示。不要给现有 v1 hashed models 原地增加
 optional fields。
 
+`request_ceiling` 表示不含基础设施重试的科学预算；live billing guard 另用
+`operational_request_ceiling = request_ceiling * (1 + infrastructure_retries)`。例如 core
+phase 分别为 144 和 288，不能用前者确认最坏付费上限。
+
 每条 trajectory 保存：
 
 - 完整 prompt/response、provider/model metadata 和 provider-reported input/output tokens；
@@ -331,7 +335,8 @@ Commit：`feat: add capability-gate tasks and floor checks`
 - 用通用 matrix runner 装载 capability-gate manifest，实现 48-cell core schedule、resume、
   single infra retry、independent caches 和完整 cost ledger。
 - 在现有 `abstrak-canary` CLI 增加 manifest-driven
-  `validate-study|preflight-study|run-study|time-study` 入口；R1 入口保持不变。
+  `inspect-study|preflight-study|run-study|time-study` 入口；`inspect-study` 只验证 manifest
+  结构和 schedule hash，资产完整性由 `preflight-study` 验证；R1 入口保持不变。
 
 Exit：fake provider/worker 覆盖全部 loop 状态；一个不计分的 live vertical slice 在 A100 上
 完成并验证 artifact provenance。

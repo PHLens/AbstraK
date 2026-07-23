@@ -9,6 +9,14 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from abstrak.canary.capabilities import (
+    CORE_PACK,
+    FULL_PACK,
+    MAP_PACK,
+    SCHED_PACK,
+    CapabilityPackSpec,
+    validate_tilelang_capability_source,
+)
 from abstrak.canary.contracts import IDENTIFIER_PATTERN, TargetStackSpec
 from abstrak.canary.fallback import StaticValidationIssue, validate_candidate_source
 
@@ -109,10 +117,40 @@ def _validate_kernelbench(source: str, target: TargetStackSpec) -> TargetValidat
     return TargetValidationResult(valid=legacy.valid, errors=legacy.errors)
 
 
+_CAPABILITY_PACKS_BY_ADAPTER: Mapping[str, CapabilityPackSpec] = MappingProxyType(
+    {pack.adapter_id: pack for pack in (CORE_PACK, SCHED_PACK, MAP_PACK, FULL_PACK)}
+)
+
+
+def _validate_tilelang_capability(
+    source: str,
+    target: TargetStackSpec,
+) -> TargetValidationResult:
+    pack = _CAPABILITY_PACKS_BY_ADAPTER[target.adapter]
+    if target.id != pack.target_id or target.backend != "tilelang" or target.version != "0.1.12":
+        issue = StaticValidationIssue(
+            code="capability_target_mismatch",
+            message=(f"target {target.id!r} does not match frozen capability pack {pack.id!r}"),
+        )
+        return TargetValidationResult(valid=False, errors=(issue,))
+    result = validate_tilelang_capability_source(source, pack)
+    return TargetValidationResult(
+        valid=result.valid,
+        errors=result.errors,
+        warnings=result.warnings,
+        metadata=result.metadata,
+    )
+
+
 DEFAULT_TARGET_ADAPTER_REGISTRY = TargetAdapterRegistry().with_validator(
     "kernelbench",
     _validate_kernelbench,
 )
+for _capability_pack in (CORE_PACK, SCHED_PACK, MAP_PACK, FULL_PACK):
+    DEFAULT_TARGET_ADAPTER_REGISTRY = DEFAULT_TARGET_ADAPTER_REGISTRY.with_validator(
+        _capability_pack.adapter_id,
+        _validate_tilelang_capability,
+    )
 
 
 def validate_target_source(

@@ -1,4 +1,4 @@
-"""Controller CLI for the supervised A100 R1 canary vertical slice."""
+"""Controller CLI for reusable canary studies and the frozen A100 R1 study."""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ from abstrak.canary.baselines import BaselineRegistryError
 from abstrak.canary.contracts import AgentBudget, TimingSpec, WorkerJob
 from abstrak.canary.gates import GateError, run_baseline_gates, run_oracle_gates
 from abstrak.canary.loop import CanaryAgentLoop
+from abstrak.canary.manifests import StudyManifestError, load_study_spec
+from abstrak.canary.matrix import MatrixSpecError, build_matrix_schedule
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.remote import LocalWorkerExecutor, SshWorkerExecutor, WorkerExecutionError
 from abstrak.canary.report import (
@@ -176,6 +178,13 @@ def _parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate", help="validate frozen canary assets offline")
     validate.add_argument("--asset-root", default=str(DEFAULT_ASSET_ROOT))
+
+    inspect_study = subparsers.add_parser(
+        "inspect-study",
+        help="inspect and materialize one hash-pinned generic study definition",
+    )
+    inspect_study.add_argument("--study-spec", required=True)
+    inspect_study.add_argument("--expected-study-sha256")
 
     subparsers.add_parser("worker", help="run one JSON worker job or GPU health check")
 
@@ -384,6 +393,43 @@ def _validate(arguments: argparse.Namespace) -> int:
             "tasks": list_task_ids(),
             "targets": list_target_ids(),
             "trusted_pairs": pairs,
+        }
+    )
+    return EXIT_OK
+
+
+def _inspect_study(arguments: argparse.Namespace) -> int:
+    pinned = load_study_spec(
+        arguments.study_spec,
+        expected_sha256=arguments.expected_study_sha256,
+    )
+    schedule = build_matrix_schedule(pinned.spec)
+    _emit(
+        {
+            "status": "structurally_valid",
+            "assets_validated": False,
+            "study_id": pinned.spec.study_id,
+            "study_spec_path": str(pinned.path),
+            "study_spec_sha256": pinned.sha256,
+            "schedule_sha256": schedule.sha256,
+            "expected_trajectories": schedule.expected_trajectories,
+            "request_ceiling": schedule.request_ceiling,
+            "operational_request_ceiling": schedule.operational_request_ceiling,
+            "agents": pinned.spec.agents,
+            "targets": pinned.spec.targets,
+            "phases": [
+                {
+                    "id": phase.id,
+                    "task_ids": phase.task_ids,
+                    "replicates": phase.replicates,
+                    "expected_trajectories": pinned.spec.phase_trajectory_count(phase.id),
+                    "request_ceiling": pinned.spec.phase_request_ceiling(phase.id),
+                    "operational_request_ceiling": (
+                        pinned.spec.phase_operational_request_ceiling(phase.id)
+                    ),
+                }
+                for phase in pinned.spec.phases
+            ],
         }
     )
     return EXIT_OK
@@ -659,6 +705,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if arguments.command == "validate":
             return _validate(arguments)
+        if arguments.command == "inspect-study":
+            return _inspect_study(arguments)
         if arguments.command == "run-trusted":
             return _run_trusted(arguments)
         if arguments.command == "run-gates":
@@ -676,6 +724,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         BaselineRegistryError,
         GateError,
         AnalysisReportError,
+        MatrixSpecError,
+        StudyManifestError,
         ValidationError,
     ) as error:
         print(f"configuration error: {error}", file=sys.stderr)

@@ -4,6 +4,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from abstrak.canary.capabilities import CORE_PACK
 from abstrak.canary.fallback import StaticValidationIssue, validate_candidate_source
 from abstrak.canary.target_adapters import (
     DEFAULT_TARGET_ADAPTER_REGISTRY,
@@ -24,7 +25,13 @@ def test_kernelbench_adapter_strictly_preserves_legacy_validation() -> None:
     legacy = validate_candidate_source(source, target.backend)
     adapted = validate_target_source(source, target)
 
-    assert DEFAULT_TARGET_ADAPTER_REGISTRY.adapter_ids == ("kernelbench",)
+    assert DEFAULT_TARGET_ADAPTER_REGISTRY.adapter_ids == (
+        "kernelbench",
+        "tilelang-capability-core",
+        "tilelang-capability-sched",
+        "tilelang-capability-map",
+        "tilelang-capability-full",
+    )
     assert adapted.valid == legacy.valid
     assert adapted.errors == legacy.errors
     assert adapted.warnings == ()
@@ -39,6 +46,21 @@ def test_unknown_adapter_fails_closed() -> None:
     assert not result.valid
     assert result.error_codes == ("unknown_target_adapter",)
     assert "unregistered-adapter" in result.errors[0].message
+
+
+def test_capability_adapter_rejects_a_mismatched_target_contract() -> None:
+    target = get_target_stack("tilelang-a100").model_copy(
+        update={
+            "id": CORE_PACK.target_id,
+            "adapter": CORE_PACK.adapter_id,
+            "version": "wrong-version",
+        }
+    )
+
+    result = validate_target_source("class ModelNew: pass\n", target)
+
+    assert not result.valid
+    assert result.error_codes == ("capability_target_mismatch",)
 
 
 def test_registry_extensions_and_results_are_immutable() -> None:

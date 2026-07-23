@@ -12,6 +12,11 @@ from abstrak.canary.remote import WorkerExecutionError
 from abstrak.providers.contracts import NormalizedResponse, NormalizedUsage
 from abstrak.providers.manifests import ManifestBundle
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+CAPABILITY_STUDY = REPOSITORY_ROOT / "benchmarks" / "capability-gate-a100" / "study.json"
+CAPABILITY_STUDY_SHA256 = "876b18e75d86e77c6e2e4cd47038f60719ba6108943ddc754086ea82685ecd00"
+CAPABILITY_SCHEDULE_SHA256 = "40c372285875337ebd62529d72b2dd5bc2f6d123cbb2940a93c7482d2537983e"
+
 
 def _worker_result(job: WorkerJob) -> WorkerResult:
     cases = tuple(
@@ -115,9 +120,42 @@ def test_validate_is_offline_and_reports_frozen_pair(capsys, monkeypatch) -> Non
     ]
     assert output["targets"] == ["cute-a100", "tilelang-a100", "triton-a100"]
     assert len(output["trusted_pairs"]) == 18
-    assert {pair["target_id"] for pair in output["trusted_pairs"]} == set(
-        output["targets"]
+    assert {pair["target_id"] for pair in output["trusted_pairs"]} == set(output["targets"])
+
+
+def test_inspect_study_is_offline_and_reports_dynamic_phase_ceilings(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "ProviderClient",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("provider was created")),
     )
+
+    exit_code = cli.main(
+        [
+            "inspect-study",
+            "--study-spec",
+            str(CAPABILITY_STUDY),
+            "--expected-study-sha256",
+            CAPABILITY_STUDY_SHA256,
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert output["status"] == "structurally_valid"
+    assert output["assets_validated"] is False
+    assert output["study_id"] == "tilelang-capability-gate-a100-v1"
+    assert output["study_spec_sha256"] == CAPABILITY_STUDY_SHA256
+    assert output["schedule_sha256"] == CAPABILITY_SCHEDULE_SHA256
+    assert output["expected_trajectories"] == 96
+    assert output["request_ceiling"] == 288
+    assert output["operational_request_ceiling"] == 576
+    assert [phase["expected_trajectories"] for phase in output["phases"]] == [48, 48]
+    assert [phase["request_ceiling"] for phase in output["phases"]] == [144, 144]
+    assert [phase["operational_request_ceiling"] for phase in output["phases"]] == [
+        288,
+        288,
+    ]
 
 
 def test_run_cell_guards_precede_config_auth_artifacts_and_network(capsys, monkeypatch) -> None:
@@ -129,9 +167,7 @@ def test_run_cell_guards_precede_config_auth_artifacts_and_network(capsys, monke
     monkeypatch.setattr(cli, "ProviderClient", unexpected)
 
     missing_live = cli.main(["run-cell", "--expected-max-requests", "4"])
-    wrong_count = cli.main(
-        ["run-cell", "--live", "--expected-max-requests", "3"]
-    )
+    wrong_count = cli.main(["run-cell", "--live", "--expected-max-requests", "3"])
 
     error = capsys.readouterr().err
     assert missing_live == cli.EXIT_CONFIG
@@ -207,9 +243,7 @@ def test_run_cell_rejects_unsandboxed_local_worker_before_auth(capsys, monkeypat
     monkeypatch.setattr(cli, "load_app_config", unexpected)
     monkeypatch.setattr(cli, "ProviderClient", unexpected)
 
-    exit_code = cli.main(
-        ["run-cell", "--live", "--expected-max-requests", "4"]
-    )
+    exit_code = cli.main(["run-cell", "--live", "--expected-max-requests", "4"])
 
     assert exit_code == cli.EXIT_CONFIG
     assert "requires --ssh-host" in capsys.readouterr().err
@@ -244,9 +278,7 @@ def test_run_trusted_uses_target_backend_and_all_sealed_cases(
     assert observed_backend == ["triton"]
     assert output["status"] == "complete"
     assert worker.jobs[0].kind == "oracle"
-    assert worker.jobs[0].case_ids == tuple(
-        case.id for case in worker.jobs[0].task.sealed_cases
-    )
+    assert worker.jobs[0].case_ids == tuple(case.id for case in worker.jobs[0].task.sealed_cases)
     verify_trajectory(output["artifact_directory"])
 
 

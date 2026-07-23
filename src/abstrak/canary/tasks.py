@@ -17,10 +17,17 @@ from abstrak.canary.contracts import InputCaseSpec, TaskPackSpec
 
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DEFAULT_ASSET_ROOT = Path(__file__).resolve().parents[3] / "benchmarks" / "r1-a100"
+CAPABILITY_GATE_ASSET_ROOT = (
+    Path(__file__).resolve().parents[3] / "benchmarks" / "capability-gate-a100"
+)
 
 
 class TaskRegistryError(ValueError):
     """Raised when a task ID or pinned task asset is invalid."""
+
+
+R1_SCOPE = "r1"
+CAPABILITY_GATE_SCOPE = "capability-gate"
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,13 @@ class PinnedAsset:
 class TaskAssets:
     source: PinnedAsset
     oracles: Mapping[str, PinnedAsset]
+
+
+@dataclass(frozen=True)
+class _TaskRegistryScope:
+    packs: Mapping[str, TaskPackSpec]
+    assets: Mapping[str, TaskAssets]
+    asset_root: Path = DEFAULT_ASSET_ROOT
 
 
 _ROW_REDUCTION_SOURCE = PinnedAsset(
@@ -177,7 +191,7 @@ _SCIENTIFIC_SEALED_CASES = (
     InputCaseSpec(id="sealed-constant", kind="constant", seed=2026071805, value=0.25),
 )
 
-_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
+_R1_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
     {
         "row-reduction-scale": TaskPackSpec(
             id="row-reduction-scale",
@@ -358,7 +372,7 @@ _TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
     }
 )
 
-_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
+_R1_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
     {
         "row-reduction-scale": TaskAssets(
             source=_ROW_REDUCTION_SOURCE,
@@ -391,10 +405,66 @@ _TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
 )
 
 
-def list_task_ids() -> tuple[str, ...]:
+_CAPABILITY_GATE_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType({})
+_CAPABILITY_GATE_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType({})
+
+_TASK_REGISTRIES: Mapping[str, _TaskRegistryScope] = MappingProxyType(
+    {
+        R1_SCOPE: _TaskRegistryScope(
+            packs=_R1_TASK_PACKS,
+            assets=_R1_TASK_ASSETS,
+        ),
+        CAPABILITY_GATE_SCOPE: _TaskRegistryScope(
+            packs=_CAPABILITY_GATE_TASK_PACKS,
+            assets=_CAPABILITY_GATE_TASK_ASSETS,
+            asset_root=CAPABILITY_GATE_ASSET_ROOT,
+        ),
+    }
+)
+
+
+def _build_global_indexes(
+    registries: Mapping[str, _TaskRegistryScope],
+) -> tuple[Mapping[str, TaskPackSpec], Mapping[str, TaskAssets]]:
+    packs: dict[str, TaskPackSpec] = {}
+    assets: dict[str, TaskAssets] = {}
+    owners: dict[str, str] = {}
+    for scope, registry in registries.items():
+        task_ids = set(registry.packs) | set(registry.assets)
+        for task_id in sorted(task_ids):
+            previous_scope = owners.get(task_id)
+            if previous_scope is not None:
+                raise TaskRegistryError(
+                    f"task ID is registered in multiple scopes: {task_id} "
+                    f"({previous_scope}, {scope})"
+                )
+            owners[task_id] = scope
+        packs.update(registry.packs)
+        assets.update(registry.assets)
+    return MappingProxyType(packs), MappingProxyType(assets)
+
+
+_TASK_PACKS, _TASK_ASSETS = _build_global_indexes(_TASK_REGISTRIES)
+
+
+def _registry_for_scope(scope: str) -> _TaskRegistryScope:
+    try:
+        return _TASK_REGISTRIES[scope]
+    except KeyError:
+        raise TaskRegistryError(f"unknown task registry scope: {scope}") from None
+
+
+def _registry_for_task(task_id: str) -> _TaskRegistryScope:
+    for registry in _TASK_REGISTRIES.values():
+        if task_id in registry.packs:
+            return registry
+    raise TaskRegistryError(f"unknown task pack: {task_id}")
+
+
+def list_task_ids(scope: str = R1_SCOPE) -> tuple[str, ...]:
     """Return registered task IDs in stable order."""
 
-    return tuple(sorted(_TASK_PACKS))
+    return tuple(sorted(_registry_for_scope(scope).packs))
 
 
 def get_task_pack(task_id: str) -> TaskPackSpec:
@@ -476,7 +546,8 @@ def load_pinned_asset(
 def load_task_source(task_id: str, *, asset_root: str | Path | None = None) -> str:
     """Load one registered public task fixture."""
 
-    return load_pinned_asset(get_task_assets(task_id).source, asset_root=asset_root)
+    resolved_root = _registry_for_task(task_id).asset_root if asset_root is None else asset_root
+    return load_pinned_asset(get_task_assets(task_id).source, asset_root=resolved_root)
 
 
 def load_oracle_source(
@@ -492,17 +563,24 @@ def load_oracle_source(
         oracle = assets.oracles[target_id]
     except KeyError:
         raise TaskRegistryError(f"no {target_id} oracle registered for task {task_id}") from None
-    return load_pinned_asset(oracle, asset_root=asset_root)
+    resolved_root = _registry_for_task(task_id).asset_root if asset_root is None else asset_root
+    return load_pinned_asset(oracle, asset_root=resolved_root)
 
 
-def validate_task_registry(*, asset_root: str | Path | None = None) -> None:
+def validate_task_registry(
+    *,
+    scope: str = R1_SCOPE,
+    asset_root: str | Path | None = None,
+) -> None:
     """Validate task contracts, cross-references, paths, and content hashes."""
 
-    if set(_TASK_PACKS) != set(_TASK_ASSETS):
+    registry = _registry_for_scope(scope)
+    resolved_root = registry.asset_root if asset_root is None else asset_root
+    if set(registry.packs) != set(registry.assets):
         raise TaskRegistryError("task contracts and asset registry have different task IDs")
-    for task_id in sorted(_TASK_PACKS):
-        task_pack = _TASK_PACKS[task_id]
-        assets = _TASK_ASSETS[task_id]
+    for task_id in sorted(registry.packs):
+        task_pack = registry.packs[task_id]
+        assets = registry.assets[task_id]
         if task_pack.id != task_id:
             raise TaskRegistryError(f"task registry key does not match contract ID: {task_id}")
         if (
@@ -510,8 +588,8 @@ def validate_task_registry(*, asset_root: str | Path | None = None) -> None:
             or task_pack.source_sha256 != assets.source.sha256
         ):
             raise TaskRegistryError(f"task source reference mismatch: {task_id}")
-        load_pinned_asset(assets.source, asset_root=asset_root)
+        load_pinned_asset(assets.source, asset_root=resolved_root)
         if not assets.oracles:
             raise TaskRegistryError(f"task has no registered oracle: {task_id}")
         for oracle in assets.oracles.values():
-            load_pinned_asset(oracle, asset_root=asset_root)
+            load_pinned_asset(oracle, asset_root=resolved_root)
