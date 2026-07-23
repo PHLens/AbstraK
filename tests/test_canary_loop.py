@@ -19,6 +19,7 @@ from abstrak.canary.contracts import (
 )
 from abstrak.canary.loop import CanaryAgentLoop
 from abstrak.canary.protocol import build_initial_messages
+from abstrak.canary.remote import FailureCategory, WorkerExecutionError
 from abstrak.canary.targets import get_target_stack, load_target_card
 from abstrak.canary.tasks import get_task_pack
 from abstrak.providers.contracts import (
@@ -185,6 +186,25 @@ class SealedFailingWorker(FakeWorker):
         if job.kind == "sealed":
             self.jobs.append(job)
             raise RuntimeError("sealed worker unavailable")
+        return super().execute(job)
+
+
+class CandidateTransportFailureWorker(FakeWorker):
+    def __init__(self, category: FailureCategory) -> None:
+        super().__init__({"good": 1.0})
+        self.category = category
+        self.failed = False
+
+    def execute(self, job: WorkerJob) -> WorkerResult:
+        if not self.failed:
+            self.failed = True
+            self.jobs.append(job)
+            raise WorkerExecutionError(
+                self.category,
+                f"candidate {self.category}",
+                health={"status": "healthy"},
+                job_scoped=True,
+            )
         return super().execute(job)
 
 
@@ -417,9 +437,7 @@ def test_provider_error_is_terminal_without_retry_and_still_seals_candidate(
 
 
 def test_worker_infrastructure_failure_stops_further_provider_calls(tmp_path: Path) -> None:
-    client = FakeClient(
-        [_candidate("first", "CONTINUE"), _candidate("must-not-run", "FINISH")]
-    )
+    client = FakeClient([_candidate("first", "CONTINUE"), _candidate("must-not-run", "FINISH")])
     worker = FailingWorker()
     loop = CanaryAgentLoop(
         client=client,
@@ -434,6 +452,106 @@ def test_worker_infrastructure_failure_stops_further_provider_calls(tmp_path: Pa
     assert len(client.requests) == 1
     assert [job.kind for job in worker.jobs] == ["dev"]
     verify_trajectory(loop.store.run_directory)
+
+
+@pytest.mark.parametrize(
+    ("category", "worker_status"),
+    (("timeout", "timeout"), ("oom", "runtime_error")),
+)
+def test_capability_policy_returns_candidate_transport_failures_as_feedback(
+    tmp_path: Path,
+    category: FailureCategory,
+    worker_status: str,
+) -> None:
+    policy = _gate_policy(1.25)
+    worker = CandidateTransportFailureWorker(category)
+    loop, client, _ = _loop(
+        tmp_path,
+        [_candidate_only("first"), _candidate_only("good")],
+        worker=worker,
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "finished"
+    assert outcome.calls == 2
+    assert [result.status for result in outcome.dev_results] == [
+        worker_status,
+        "completed",
+    ]
+    assert outcome.dev_results[0].metadata["failure_category"] == category
+    assert outcome.dev_results[0].metadata["failure_scope"] == "job"
+    second_history = client.requests[1].messages  # type: ignore[attr-defined]
+    assert any(worker_status in message.content for message in second_history)
+
+
+def test_r1_policy_keeps_transport_timeout_terminal(tmp_path: Path) -> None:
+    worker = CandidateTransportFailureWorker("timeout")
+    loop, client, _ = _loop(
+        tmp_path,
+        [_candidate("first", "CONTINUE"), _candidate("unused", "FINISH")],
+        worker=worker,
+    )
+
+    outcome = _run(loop)
+
+    assert outcome.status == "worker_error"
+    assert outcome.calls == 1
+    assert len(client.requests) == 1
+    assert outcome.dev_results[0].status == "worker_error"
+
+
+def test_capability_policy_keeps_unscoped_transport_timeout_terminal(tmp_path: Path) -> None:
+    class UnscopedTimeoutWorker(FakeWorker):
+        def execute(self, job: WorkerJob) -> WorkerResult:
+            self.jobs.append(job)
+            raise WorkerExecutionError(
+                "timeout",
+                "SSH transport stalled",
+                health={"status": "healthy"},
+            )
+
+    policy = _gate_policy(1.25)
+    worker = UnscopedTimeoutWorker()
+    loop, client, _ = _loop(
+        tmp_path,
+        [_candidate_only("first"), _candidate_only("unused")],
+        worker=worker,
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "worker_error"
+    assert outcome.calls == 1
+    assert len(client.requests) == 1
+    assert outcome.dev_results[0].status == "worker_error"
+
+
+def test_capability_policy_keeps_unhealthy_job_timeout_terminal(tmp_path: Path) -> None:
+    class UnhealthyTimeoutWorker(FakeWorker):
+        def execute(self, job: WorkerJob) -> WorkerResult:
+            self.jobs.append(job)
+            raise WorkerExecutionError(
+                "timeout",
+                "job timed out before GPU health failed",
+                health={"status": "unhealthy"},
+                job_scoped=True,
+            )
+
+    policy = _gate_policy(1.25)
+    worker = UnhealthyTimeoutWorker()
+    loop, client, _ = _loop(
+        tmp_path,
+        [_candidate_only("first"), _candidate_only("unused")],
+        worker=worker,
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "worker_error"
+    assert outcome.calls == 1
+    assert len(client.requests) == 1
+    assert outcome.dev_results[0].status == "worker_error"
 
 
 def test_sealed_worker_failure_overrides_finished_status_and_stops_sealed_jobs(

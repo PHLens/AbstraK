@@ -56,11 +56,13 @@ class WorkerExecutionError(RuntimeError):
         *,
         returncode: int | None = None,
         health: Mapping[str, object] | None = None,
+        job_scoped: bool = False,
     ) -> None:
         super().__init__(f"{category}: {message}")
         self.category = category
         self.returncode = returncode
         self.health = None if health is None else dict(health)
+        self.job_scoped = job_scoped
 
     def with_health(self, health: Mapping[str, object]) -> WorkerExecutionError:
         self.health = dict(health)
@@ -398,6 +400,7 @@ class _SubprocessExecutor:
                     category,
                     diagnostic,
                     returncode=output.returncode,
+                    job_scoped=category in {"timeout", "oom"},
                 )
             result = _parse_result(output.stdout, job)
         except WorkerExecutionError as error:
@@ -432,7 +435,12 @@ class _SubprocessExecutor:
             raise primary_error
         if primary_error is not None:
             primary_error.with_health(health)
-            self._quarantine(primary_error)
+            recoverable_job_failure = primary_error.job_scoped and primary_error.category in {
+                "timeout",
+                "oom",
+            }
+            if not recoverable_job_failure:
+                self._quarantine(primary_error)
             raise primary_error
 
         if result is None:
@@ -445,8 +453,7 @@ class _SubprocessExecutor:
             raise error
         oom = _oom_diagnostic(result)
         if oom is not None:
-            error = WorkerExecutionError("oom", oom, health=health)
-            self._quarantine(error)
+            error = WorkerExecutionError("oom", oom, health=health, job_scoped=True)
             raise error
         bound_result = result.model_copy(
             update={

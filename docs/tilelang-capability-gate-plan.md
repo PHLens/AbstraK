@@ -167,6 +167,12 @@ adapter dispatch 复用 v1 `WorkerJob/WorkerResult` wire schema；pack violation
 `static_check_failed` 和稳定 error code 表示。不要给现有 v1 hashed models 原地增加
 optional fields。
 
+Matrix cell 使用稳定的 logical trajectory ID；唯一一次基础设施重试写入独立的
+`<logical-id>.infra-1` attempt 目录，禁止覆盖首次产物。每个 attempt 的 typed manifest 必须
+绑定 cell identity、Agent、prompt、policy、budget、dev timing、device 和 execution-context
+hash；resume 只有在 checksum、事件/turn ledger、candidate/dev/sealed 结果和这些运行输入
+全部一致时才成立。
+
 `request_ceiling` 表示不含基础设施重试的科学预算；live billing guard 另用
 `operational_request_ceiling = request_ceiling * (1 + infrastructure_retries)`。例如 core
 phase 分别为 144 和 288，不能用前者确认最坏付费上限。

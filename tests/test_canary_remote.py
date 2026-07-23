@@ -250,8 +250,29 @@ def test_remote_timeout_exit_is_classified_as_timeout() -> None:
         executor.execute(_job())
 
     assert captured.value.category == "timeout"
+    assert captured.value.job_scoped
     assert captured.value.health is not None
     assert captured.value.health["status"] == "healthy"
+
+
+def test_healthy_probe_allows_a_fresh_job_after_candidate_timeout() -> None:
+    first = _job(job_id="timed-out-job")
+    second = _job(job_id="next-job")
+    popen = PopenRecorder(
+        FakeProcess(returncode=124),
+        FakeProcess(stdout=_health()),
+        FakeProcess(stdout=_result(second).model_dump_json()),
+        FakeProcess(stdout=_health()),
+    )
+    executor = LocalWorkerExecutor("/worker/KernelBench", popen_factory=popen)
+
+    with pytest.raises(WorkerExecutionError, match="timeout"):
+        executor.execute(first)
+    result = executor.execute(second)
+
+    assert result.status == "environment_error"
+    assert not executor.quarantined
+    assert len(popen.calls) == 4
 
 
 def test_oom_exit_runs_health_check_and_preserves_it_on_error() -> None:
@@ -265,13 +286,14 @@ def test_oom_exit_runs_health_check_and_preserves_it_on_error() -> None:
         executor.execute(_job())
 
     assert captured.value.category == "oom"
+    assert captured.value.job_scoped
     assert captured.value.health is not None
     assert captured.value.health["status"] == "healthy"
-    assert executor.quarantined
+    assert not executor.quarantined
     assert len(popen.calls) == 2
 
 
-def test_structured_oom_result_is_quarantined_after_health_check() -> None:
+def test_structured_oom_result_is_recoverable_after_health_check() -> None:
     job = _job()
     popen = PopenRecorder(
         FakeProcess(stdout=_oom_result(job).model_dump_json()),
@@ -283,9 +305,10 @@ def test_structured_oom_result_is_quarantined_after_health_check() -> None:
         executor.execute(job)
 
     assert captured.value.category == "oom"
+    assert captured.value.job_scoped
     assert captured.value.health is not None
     assert captured.value.health["status"] == "healthy"
-    assert executor.quarantined
+    assert not executor.quarantined
 
 
 def test_executor_rejects_non_a100_hardware_when_required() -> None:
@@ -345,6 +368,7 @@ def test_timeout_kills_and_reaps_the_fresh_process_group() -> None:
         executor.execute(_job())
 
     assert captured.value.category == "timeout"
+    assert not captured.value.job_scoped
     assert killed == [(process.pid, signal.SIGKILL)]
     assert len(process.communications) == 2
     payload, timeout = process.communications[0]
@@ -354,6 +378,7 @@ def test_timeout_kills_and_reaps_the_fresh_process_group() -> None:
     assert health.communications == [(None, 30.0)]
     assert captured.value.health is not None
     assert captured.value.health["status"] == "healthy"
+    assert executor.quarantined
 
 
 def test_unhealthy_post_job_probe_fails_closed_and_quarantines() -> None:

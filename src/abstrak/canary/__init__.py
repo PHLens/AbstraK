@@ -1,7 +1,8 @@
-"""Fixed-scope canary harness for the A100 R1 rapid validation study."""
+"""Reusable canary harness with frozen study-specific registries."""
 
 from abstrak.canary.contracts import (
     AgentBudget,
+    AgentLoopPolicy,
     CaseResult,
     InputCaseSpec,
     PublicTaskSpec,
@@ -15,6 +16,7 @@ from abstrak.canary.contracts import (
 
 __all__ = [
     "AgentBudget",
+    "AgentLoopPolicy",
     "CaseResult",
     "InputCaseSpec",
     "PublicTaskSpec",

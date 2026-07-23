@@ -1,11 +1,11 @@
-"""Fixed four-turn Agent loop for the A100 R1 canary study."""
+"""Deterministic bounded Agent loop shared by canary matrix studies."""
 
 from __future__ import annotations
 
 import hashlib
 import statistics
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -55,15 +55,32 @@ def _candidate_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
-def _worker_failure(job: WorkerJob, error: Exception) -> WorkerResult:
+def _worker_failure(
+    job: WorkerJob,
+    error: Exception,
+    policy: AgentLoopPolicy,
+) -> WorkerResult:
     health = getattr(error, "health", None)
+    category = getattr(error, "category", None)
+    job_scoped = getattr(error, "job_scoped", False)
+    health_is_healthy = isinstance(health, Mapping) and health.get("status") == "healthy"
+    status = "worker_error"
+    metadata = {"post_job_gpu_health": health} if health is not None else {}
+    if (
+        policy.response_parser == "candidate_only"
+        and job_scoped
+        and health_is_healthy
+        and category in {"timeout", "oom"}
+    ):
+        status = "timeout" if category == "timeout" else "runtime_error"
+        metadata = {**metadata, "failure_category": category, "failure_scope": "job"}
     return WorkerResult(
         job_id=job.job_id,
         job_sha256=job.sha256,
         input_sha256=job.input_sha256,
         candidate_sha256=job.candidate_sha256,
-        status="worker_error",
-        metadata={"post_job_gpu_health": health} if health is not None else {},
+        status=status,
+        metadata=metadata,
         error=f"{type(error).__name__}: {error}",
     )
 
@@ -159,11 +176,11 @@ class CanaryAgentLoop:
             device=device,
         )
 
-    def _execute(self, job: WorkerJob) -> WorkerResult:
+    def _execute(self, job: WorkerJob, policy: AgentLoopPolicy) -> WorkerResult:
         try:
             result = self.worker.execute(job)
         except Exception as error:
-            result = _worker_failure(job, error)
+            result = _worker_failure(job, error, policy)
         return result.verify_for_job(job)
 
     def run(
@@ -277,7 +294,7 @@ class CanaryAgentLoop:
                 timing=dev_timing,
                 device=device,
             )
-            dev_result = self._execute(dev_job)
+            dev_result = self._execute(dev_job, policy)
             dev_results.append(dev_result)
             evaluated_candidates.append(
                 _EvaluatedCandidate(
@@ -371,7 +388,7 @@ class CanaryAgentLoop:
                 timing=None,
                 device=device,
             )
-            first_sealed = self._execute(first_job)
+            first_sealed = self._execute(first_job, policy)
             self.store.write_sealed("first", first_job, first_sealed)
             self._event("sealed_finished", None, {"label": "first", "result": first_sealed})
             if first_sealed.status in {"environment_error", "worker_error"}:
@@ -395,7 +412,7 @@ class CanaryAgentLoop:
                     timing=None,
                     device=device,
                 )
-                final_sealed = self._execute(final_job)
+                final_sealed = self._execute(final_job, policy)
                 self.store.write_sealed("final", final_job, final_sealed)
                 self._event("sealed_finished", None, {"label": "final", "result": final_sealed})
                 if final_sealed.status in {"environment_error", "worker_error"}:
