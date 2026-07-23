@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import json
 from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from abstrak.canary.artifacts import TrajectoryStore, verify_trajectory
 from abstrak.canary.contracts import (
+    R1_AGENT_LOOP_POLICY,
     AgentBudget,
+    AgentLoopPolicy,
     CaseResult,
     TimingSpec,
     WorkerJob,
@@ -23,6 +28,8 @@ from abstrak.providers.contracts import (
     NormalizedUsage,
     ProviderCallError,
 )
+
+TEST_DEV_TIMING = TimingSpec(trial_runs=3, repetitions=1)
 
 
 def _model_response(request: object, text: str, index: int) -> NormalizedResponse:
@@ -69,6 +76,23 @@ class ModelNew:
 """
 
 
+def _candidate_only(name: str) -> str:
+    return f"""```python
+class ModelNew:
+    candidate_name = {name!r}
+```
+"""
+
+
+def _gate_policy(latency_ceiling_ms: float) -> AgentLoopPolicy:
+    return AgentLoopPolicy(
+        response_parser="candidate_only",
+        stop_policy="correct_latency",
+        final_selection="best_correct_latency",
+        latency_ceiling_ms=latency_ceiling_ms,
+    )
+
+
 class FakeClient:
     def __init__(self, responses: list[str]) -> None:
         self.responses = deque(responses)
@@ -102,8 +126,9 @@ class FakeClient:
 
 
 class FakeWorker:
-    def __init__(self) -> None:
+    def __init__(self, latency_by_candidate: dict[str, float] | None = None) -> None:
         self.jobs: list[WorkerJob] = []
+        self.latency_by_candidate = latency_by_candidate or {}
 
     def execute(self, job: WorkerJob) -> WorkerResult:
         self.jobs.append(job)
@@ -120,7 +145,17 @@ class FakeWorker:
             )
             for case_id in job.case_ids
         )
-        timing = tuple(1.0 for _ in range(job.timing.trial_runs)) if correct and job.timing else ()
+        latency = next(
+            (
+                value
+                for name, value in self.latency_by_candidate.items()
+                if f"candidate_name = {name!r}" in job.candidate_source
+            ),
+            1.0,
+        )
+        timing = (
+            tuple(latency for _ in range(job.timing.trial_runs)) if correct and job.timing else ()
+        )
         return WorkerResult(
             job_id=job.job_id,
             job_sha256=job.sha256,
@@ -153,9 +188,14 @@ class SealedFailingWorker(FakeWorker):
         return super().execute(job)
 
 
-def _loop(tmp_path: Path, responses: list[str]) -> tuple[CanaryAgentLoop, FakeClient, FakeWorker]:
+def _loop(
+    tmp_path: Path,
+    responses: list[str],
+    *,
+    worker: FakeWorker | None = None,
+) -> tuple[CanaryAgentLoop, FakeClient, FakeWorker]:
     client = FakeClient(responses)
-    worker = FakeWorker()
+    worker = worker or FakeWorker()
     loop = CanaryAgentLoop(
         client=client,
         worker=worker,
@@ -164,7 +204,13 @@ def _loop(tmp_path: Path, responses: list[str]) -> tuple[CanaryAgentLoop, FakeCl
     return loop, client, worker
 
 
-def _run(loop: CanaryAgentLoop):
+def _run(
+    loop: CanaryAgentLoop,
+    *,
+    policy: AgentLoopPolicy = R1_AGENT_LOOP_POLICY,
+    max_calls: int = 4,
+    dev_timing: TimingSpec | None = TEST_DEV_TIMING,
+):
     task = get_task_pack("row-reduction-scale")
     return loop.run(
         trajectory_id="trajectory",
@@ -172,11 +218,13 @@ def _run(loop: CanaryAgentLoop):
         initial_messages=build_initial_messages(
             task,
             load_target_card("triton-a100"),
+            policy=policy,
         ),
         task=task,
         target=get_target_stack("triton-a100"),
-        budget=AgentBudget(max_calls=4, max_wall_seconds=1200.0),
-        dev_timing=TimingSpec(trial_runs=3, repetitions=1),
+        budget=AgentBudget(max_calls=max_calls, max_wall_seconds=1200.0),
+        dev_timing=dev_timing,
+        policy=policy,
     )
 
 
@@ -211,6 +259,23 @@ def test_continue_then_finish_keeps_sealed_results_out_of_history(tmp_path: Path
     )
     assert "sealed-sentinel" not in rendered_history
     assert "sealed-random" not in rendered_history
+    event_kinds = [
+        json.loads(path.read_text(encoding="utf-8"))["kind"]
+        for path in sorted((loop.store.run_directory / "events").glob("*.json"))
+    ]
+    assert event_kinds == [
+        "trajectory_started",
+        "request_started",
+        "response_received",
+        "dev_finished",
+        "request_started",
+        "response_received",
+        "dev_finished",
+        "agent_finished",
+        "sealed_finished",
+        "sealed_finished",
+        "trajectory_terminal",
+    ]
     verify_trajectory(loop.store.run_directory)
 
 
@@ -227,6 +292,100 @@ def test_four_continue_actions_stop_at_call_limit(tmp_path: Path) -> None:
     assert len(client.requests) == 4
     assert [job.kind for job in worker.jobs].count("dev") == 4
     assert [job.kind for job in worker.jobs][-2:] == ["sealed", "sealed"]
+
+
+def test_candidate_only_controller_stops_when_correct_latency_meets_ceiling(
+    tmp_path: Path,
+) -> None:
+    policy = _gate_policy(1.25)
+    loop, client, worker = _loop(
+        tmp_path,
+        [_candidate_only("bad"), _candidate_only("good-fast"), _candidate_only("unused")],
+        worker=FakeWorker({"good-fast": 1.0}),
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "finished"
+    assert outcome.calls == 2
+    assert len(client.requests) == 2
+    assert [job.kind for job in worker.jobs] == ["dev", "dev", "sealed", "sealed"]
+    assert outcome.final_candidate_sha256 == outcome.dev_results[1].candidate_sha256
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_best_correct_latency_can_select_an_earlier_candidate(tmp_path: Path) -> None:
+    policy = _gate_policy(0.5)
+    loop, client, worker = _loop(
+        tmp_path,
+        [
+            _candidate_only("good-slow"),
+            _candidate_only("good-fast"),
+            _candidate_only("good-medium"),
+        ],
+        worker=FakeWorker(
+            {
+                "good-slow": 2.0,
+                "good-fast": 1.0,
+                "good-medium": 1.5,
+            }
+        ),
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "call_limit"
+    assert outcome.calls == 3
+    assert outcome.final_candidate_sha256 == outcome.dev_results[1].candidate_sha256
+    assert "good-fast" in worker.jobs[-1].candidate_source
+    second_history = client.requests[1].messages  # type: ignore[attr-defined]
+    assert any("latency_ceiling_ms" in message.content for message in second_history)
+    assert any("meets_latency_ceiling" in message.content for message in second_history)
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_best_correct_latency_falls_back_to_last_complete_candidate(tmp_path: Path) -> None:
+    policy = _gate_policy(0.5)
+    loop, client, worker = _loop(
+        tmp_path,
+        [_candidate_only("bad-first"), "invalid", _candidate_only("bad-last")],
+    )
+
+    outcome = _run(loop, policy=policy, max_calls=3)
+
+    assert outcome.status == "call_limit"
+    assert outcome.calls == 3
+    assert len(client.requests) == 3
+    assert len(outcome.dev_results) == 2
+    assert outcome.final_candidate_sha256 == outcome.dev_results[-1].candidate_sha256
+    assert "bad-last" in worker.jobs[-1].candidate_source
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_default_r1_policy_still_selects_the_last_candidate(tmp_path: Path) -> None:
+    loop, _client, worker = _loop(
+        tmp_path,
+        [_candidate("good-fast", "CONTINUE"), _candidate("good-slow", "FINISH")],
+        worker=FakeWorker({"good-fast": 0.5, "good-slow": 2.0}),
+    )
+
+    outcome = _run(loop)
+
+    assert outcome.status == "finished"
+    assert outcome.final_candidate_sha256 == outcome.dev_results[-1].candidate_sha256
+    assert "good-slow" in worker.jobs[-1].candidate_source
+    verify_trajectory(loop.store.run_directory)
+
+
+def test_latency_policy_requires_dev_timing_before_first_request(tmp_path: Path) -> None:
+    policy = _gate_policy(1.25)
+    loop, client, worker = _loop(tmp_path, [_candidate_only("good")])
+
+    with pytest.raises(ValueError, match="require dev timing"):
+        _run(loop, policy=policy, max_calls=3, dev_timing=None)
+
+    assert client.requests == []
+    assert worker.jobs == []
 
 
 def test_all_protocol_failures_produce_no_candidate(tmp_path: Path) -> None:

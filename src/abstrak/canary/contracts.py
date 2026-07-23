@@ -199,6 +199,42 @@ class AgentBudget(CanaryModel):
     max_wall_seconds: float = Field(default=1200.0, gt=0, le=86400)
 
 
+class AgentLoopPolicy(CanaryModel):
+    """Frozen response, stopping, and candidate-selection policy for one trajectory."""
+
+    schema_version: Literal["canary-agent-loop-policy.v1"] = "canary-agent-loop-policy.v1"
+    response_parser: Literal["agent_marker", "candidate_only"] = "agent_marker"
+    stop_policy: Literal["agent", "correct_latency"] = "agent"
+    final_selection: Literal["last", "best_correct_latency"] = "last"
+    latency_ceiling_ms: float | None = None
+
+    @model_validator(mode="after")
+    def modes_are_consistent(self) -> AgentLoopPolicy:
+        supported_pairs = {
+            ("agent_marker", "agent"),
+            ("candidate_only", "correct_latency"),
+        }
+        if (self.response_parser, self.stop_policy) not in supported_pairs:
+            raise ValueError("response parser and stop policy are not a supported pair")
+        if self.stop_policy == "correct_latency":
+            if (
+                self.latency_ceiling_ms is None
+                or not math.isfinite(self.latency_ceiling_ms)
+                or self.latency_ceiling_ms <= 0
+            ):
+                raise ValueError("correct_latency requires a finite positive latency ceiling")
+        elif self.latency_ceiling_ms is not None:
+            raise ValueError("agent stop policy cannot declare a latency ceiling")
+        return self
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self)
+
+
+R1_AGENT_LOOP_POLICY = AgentLoopPolicy()
+
+
 class WorkerJob(CanaryModel):
     """Canonical controller-to-worker request for one candidate process."""
 

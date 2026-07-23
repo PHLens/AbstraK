@@ -7,7 +7,9 @@ import pytest
 from pydantic import ValidationError
 
 from abstrak.canary.contracts import (
+    R1_AGENT_LOOP_POLICY,
     AgentBudget,
+    AgentLoopPolicy,
     CaseResult,
     InputCaseSpec,
     TargetStackSpec,
@@ -16,6 +18,7 @@ from abstrak.canary.contracts import (
     WorkerJob,
     WorkerResult,
 )
+from abstrak.providers.contracts import sha256_json
 
 
 def _task() -> TaskPackSpec:
@@ -193,6 +196,39 @@ def test_agent_budget_is_strict_and_fixed_to_four_calls() -> None:
         AgentBudget(max_calls="4")
     with pytest.raises(ValidationError):
         AgentBudget(max_calls=5)
+
+
+def test_agent_loop_policy_defaults_to_the_frozen_r1_behavior() -> None:
+    assert R1_AGENT_LOOP_POLICY == AgentLoopPolicy()
+    assert R1_AGENT_LOOP_POLICY.model_dump(mode="json") == {
+        "schema_version": "canary-agent-loop-policy.v1",
+        "response_parser": "agent_marker",
+        "stop_policy": "agent",
+        "final_selection": "last",
+        "latency_ceiling_ms": None,
+    }
+    assert R1_AGENT_LOOP_POLICY.sha256 == sha256_json(R1_AGENT_LOOP_POLICY)
+
+
+def test_candidate_only_policy_requires_controller_latency_stop() -> None:
+    policy = AgentLoopPolicy(
+        response_parser="candidate_only",
+        stop_policy="correct_latency",
+        final_selection="best_correct_latency",
+        latency_ceiling_ms=1.25,
+    )
+
+    assert policy.latency_ceiling_ms == 1.25
+    with pytest.raises(ValidationError, match="supported pair"):
+        AgentLoopPolicy(response_parser="candidate_only")
+    with pytest.raises(ValidationError, match="finite positive"):
+        AgentLoopPolicy(
+            response_parser="candidate_only",
+            stop_policy="correct_latency",
+            latency_ceiling_ms=float("inf"),
+        )
+    with pytest.raises(ValidationError, match="cannot declare"):
+        AgentLoopPolicy(latency_ceiling_ms=1.25)
 
 
 def test_no_candidate_outcome_cannot_contain_candidate_or_sealed_results() -> None:

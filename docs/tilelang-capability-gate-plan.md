@@ -152,18 +152,20 @@ latency、相对 $L_i^*$ 的状态和 capability violation。不得包含 sealed
 
 ### Artifacts And Cost
 
-新实验使用独立 namespace、study IDs、manifest 和 report，保留现有 R1 v1 contracts、CLI、
-artifact hashes 和分析结果不变。建议模块边界：
+新实验复用并泛化现有 `abstrak.canary` harness，只使用独立 study IDs、manifest 和 report。
+R1 v1 contracts、CLI 默认行为、artifact hashes 和分析结果保持不变。模块边界为：
 
 ```text
-src/abstrak/capability_gate/       pack/task registries, validator, loop, schedule, analysis, CLI
-benchmarks/capability-gate-a100/   tasks, target cards, expert sources, capability canaries
-artifacts/capability-gate-a100/    immutable manifests, trajectories, timing and reports
+src/abstrak/canary/                reusable policies, adapters, matrix runner and artifacts
+benchmarks/capability-gate-a100/   study manifest, tasks, cards, experts and canaries
+artifacts/capability-gate-a100/    immutable trajectories, timing and reports
 ```
 
-四个 pack 可继续编码为 `TargetStackSpec` 变体并复用 v1 `WorkerJob/WorkerResult` wire schema；
-pack violation 使用 `static_check_failed` 和稳定 error code 表示。不要给现有 v1 hashed models
-原地增加 optional fields。
+每个实验只提供冻结的 matrix spec、资产和 gate policy，不复制 loop、worker、transport、
+artifact store 或 phase runner。四个 pack 编码为 `TargetStackSpec` 变体，通过通用 target
+adapter dispatch 复用 v1 `WorkerJob/WorkerResult` wire schema；pack violation 使用
+`static_check_failed` 和稳定 error code 表示。不要给现有 v1 hashed models 原地增加
+optional fields。
 
 每条 trajectory 保存：
 
@@ -296,21 +298,24 @@ timing 交集不足或任何 pack-specific scientific cell 缺失时，结论为
 
 ## Implementation Milestones
 
-### M1: Capability Contract And Validator
+### M1: Reusable Harness Extension Points
 
-- 建立独立 pack/target registry 和 machine-rendered target cards。
-- 实现 strict AST validator、argument-domain checks、minimum-pack inference 和 monotonic
-  acceptance tests。
-- 在 evaluator 中按 adapter dispatch capability validation，同时保持 R1 `kernelbench`
-  adapter 行为不变。
+- 在现有 `abstrak.canary` 中增加 hash-bound loop policy、candidate-only protocol、
+  controller stop 和 best-correct-latency selection；R1 default policy 保持原行为。
+- 增加 manifest-driven matrix/phase spec、balanced schedule 和动态 request ceiling，不修改
+  `R1StudySchedule` 或其 hash。
+- 在 evaluator 中增加 fail-closed target-adapter dispatch，同时保持 R1 `kernelbench`
+  adapter 的结果、错误和 metadata 不变。
 
-Exit：所有 pack canaries 离线通过；escape/bypass fixtures fail closed；现有 R1 tests 全部
-通过。
+Exit：generic policy、matrix 和 adapter tests 通过；现有 R1 tests 和 artifact contracts
+全部通过。
 
-Commit：`feat: add tilelang capability-pack contracts`
+Commit：`feat: generalize the canary harness`
 
 ### M2: Workloads, Expert Floor And Baselines
 
+- 在通用 target-adapter 接口上实现四个 TileLang capability specs、strict AST validator、
+  argument-domain checks、minimum-pack inference 和 machine-rendered target cards。
 - 实现并冻结八个 task packs、输入 cases、容差、B-legal expert sources 和三个 capability
   canaries。
 - 扩展 eager/compile/vendor baseline registry，运行 A100 correctness/timing floor。
@@ -323,11 +328,10 @@ Commit：`feat: add capability-gate tasks and floor checks`
 
 ### M3: Fixed-Pack Agent Study Runner
 
-- 实现 controller-defined stop、best-so-far selection、candidate-only protocol 和 bounded
-  feedback。
-- 实现 48-cell core schedule、resume、single infra retry、independent caches 和完整 cost
-  ledger。
-- 添加 `abstrak-capability-gate validate|preflight|run-study|time-study` CLI。
+- 用通用 matrix runner 装载 capability-gate manifest，实现 48-cell core schedule、resume、
+  single infra retry、independent caches 和完整 cost ledger。
+- 在现有 `abstrak-canary` CLI 增加 manifest-driven
+  `validate-study|preflight-study|run-study|time-study` 入口；R1 入口保持不变。
 
 Exit：fake provider/worker 覆盖全部 loop 状态；一个不计分的 live vertical slice 在 A100 上
 完成并验证 artifact provenance。

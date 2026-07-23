@@ -7,6 +7,8 @@ import sys
 from abstrak.canary.baselines import load_baseline_source
 from abstrak.canary.contracts import WorkerJob
 from abstrak.canary.evaluator import _coefficient_of_variation, evaluate_job
+from abstrak.canary.fallback import StaticValidationIssue
+from abstrak.canary.target_adapters import TargetAdapterRegistry, TargetValidationResult
 from abstrak.canary.targets import get_target_stack
 from abstrak.canary.tasks import get_task_pack, load_oracle_source
 
@@ -57,6 +59,53 @@ def test_runtime_import_failure_is_a_terminal_environment_result() -> None:
     assert result.status == "environment_error"
     assert result.error == "ModuleNotFoundError: torch is not installed"
     assert result.verify_for_job(job) is result
+
+
+def test_target_adapter_warnings_and_metadata_survive_static_preflight() -> None:
+    warning = StaticValidationIssue(code="adapter_warning", message="recorded for audit")
+
+    def validate(_source: str, _target: object) -> TargetValidationResult:
+        return TargetValidationResult(
+            valid=True,
+            warnings=(warning,),
+            metadata={"used_capabilities": ["base.copy"]},
+        )
+
+    adapters = TargetAdapterRegistry().with_validator(  # type: ignore[arg-type]
+        "kernelbench", validate
+    )
+
+    def missing_runtime(_root: object) -> object:
+        raise ModuleNotFoundError("runtime was reached")
+
+    result = evaluate_job(
+        _job(load_oracle_source("row-reduction-scale", "triton")),
+        "/missing",
+        runtime_loader=missing_runtime,  # type: ignore[arg-type]
+        target_adapter_registry=adapters,
+    )
+
+    assert result.status == "environment_error"
+    assert result.static_warnings == ("adapter_warning: recorded for audit",)
+    assert result.metadata == {
+        "used_capabilities": ["base.copy"],
+        "device": "cuda:0",
+    }
+
+
+def test_unknown_target_adapter_fails_before_runtime_loading() -> None:
+    def forbidden_runtime_loader(_root: object) -> object:
+        raise AssertionError("an unknown adapter must fail before runtime loading")
+
+    result = evaluate_job(
+        _job(load_oracle_source("row-reduction-scale", "triton")),
+        "/missing",
+        runtime_loader=forbidden_runtime_loader,  # type: ignore[arg-type]
+        target_adapter_registry=TargetAdapterRegistry(),
+    )
+
+    assert result.status == "static_check_failed"
+    assert any("unknown_target_adapter" in error for error in result.static_errors)
 
 
 def test_registered_baseline_skips_target_static_validation() -> None:

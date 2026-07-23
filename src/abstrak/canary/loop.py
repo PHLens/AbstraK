@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import statistics
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from abstrak.canary.artifacts import TrajectoryStore
 from abstrak.canary.contracts import (
+    R1_AGENT_LOOP_POLICY,
     AgentBudget,
+    AgentLoopPolicy,
     TargetStackSpec,
     TaskPackSpec,
     TimingSpec,
@@ -62,6 +66,49 @@ def _worker_failure(job: WorkerJob, error: Exception) -> WorkerResult:
         metadata={"post_job_gpu_health": health} if health is not None else {},
         error=f"{type(error).__name__}: {error}",
     )
+
+
+@dataclass(frozen=True)
+class _EvaluatedCandidate:
+    turn_index: int
+    source: str
+    sha256: str
+    dev_result: WorkerResult
+
+
+def _median_dev_latency(result: WorkerResult) -> float:
+    if not result.timing_ms:
+        raise ValueError("latency policy requires timing samples for every correct candidate")
+    return statistics.median(result.timing_ms)
+
+
+def _select_final_candidate(
+    candidates: list[_EvaluatedCandidate],
+    policy: AgentLoopPolicy,
+) -> _EvaluatedCandidate:
+    if not candidates:
+        raise ValueError("cannot select from an empty candidate list")
+    if policy.final_selection == "last":
+        return candidates[-1]
+    correct = [candidate for candidate in candidates if candidate.dev_result.correct]
+    if not correct:
+        return candidates[-1]
+    return min(
+        correct,
+        key=lambda candidate: (
+            _median_dev_latency(candidate.dev_result),
+            candidate.turn_index,
+        ),
+    )
+
+
+def _controller_latency_stop(result: WorkerResult, policy: AgentLoopPolicy) -> bool:
+    if not result.correct:
+        return False
+    ceiling = policy.latency_ceiling_ms
+    if ceiling is None:  # The policy contract makes this unreachable.
+        raise ValueError("correct_latency policy is missing its latency ceiling")
+    return _median_dev_latency(result) <= ceiling
 
 
 class CanaryAgentLoop:
@@ -130,7 +177,14 @@ class CanaryAgentLoop:
         budget: AgentBudget = DEFAULT_AGENT_BUDGET,
         device: str = "cuda:0",
         dev_timing: TimingSpec | None = DEFAULT_DEV_TIMING,
+        policy: AgentLoopPolicy = R1_AGENT_LOOP_POLICY,
     ) -> TrajectoryOutcome:
+        if (
+            policy.stop_policy == "correct_latency"
+            or policy.final_selection == "best_correct_latency"
+        ) and dev_timing is None:
+            raise ValueError("latency-based loop policies require dev timing")
+
         started_at = self.utcnow()
         started_clock = self.monotonic()
         history = list(initial_messages)
@@ -139,6 +193,7 @@ class CanaryAgentLoop:
         known_output_tokens = 0
         usage_complete = True
         dev_results: list[WorkerResult] = []
+        evaluated_candidates: list[_EvaluatedCandidate] = []
         first_source: str | None = None
         first_hash: str | None = None
         final_source: str | None = None
@@ -192,11 +247,14 @@ class CanaryAgentLoop:
                 )
                 break
             try:
-                action = parse_agent_action(response.text)
+                action = parse_agent_action(response.text, policy=policy)
             except AgentProtocolError as error:
                 self.store.write_turn(turn_index, request=request, response=response)
                 history.append(
-                    ChatMessage(role=MessageRole.USER, content=protocol_error_feedback(error))
+                    ChatMessage(
+                        role=MessageRole.USER,
+                        content=protocol_error_feedback(error, policy=policy),
+                    )
                 )
                 self._event("action_parse_failed", turn_index, {"error": str(error)})
                 continue
@@ -221,6 +279,14 @@ class CanaryAgentLoop:
             )
             dev_result = self._execute(dev_job)
             dev_results.append(dev_result)
+            evaluated_candidates.append(
+                _EvaluatedCandidate(
+                    turn_index=turn_index,
+                    source=candidate_source,
+                    sha256=candidate_sha256,
+                    dev_result=dev_result,
+                )
+            )
             self.store.write_turn(
                 turn_index,
                 request=request,
@@ -247,16 +313,37 @@ class CanaryAgentLoop:
                     {"phase": "dev_result"},
                 )
                 break
-            if action.decision == "finish":
+            if policy.stop_policy == "agent":
+                if action.decision == "finish":
+                    terminal_status = "finished"
+                    self._event("agent_finished", turn_index, {"candidate_sha256": final_hash})
+                    break
+            elif _controller_latency_stop(dev_result, policy):
                 terminal_status = "finished"
-                self._event("agent_finished", turn_index, {"candidate_sha256": final_hash})
+                self._event(
+                    "controller_finished",
+                    turn_index,
+                    {
+                        "candidate_sha256": final_hash,
+                        "median_latency_ms": _median_dev_latency(dev_result),
+                        "latency_ceiling_ms": policy.latency_ceiling_ms,
+                    },
+                )
                 break
             history.append(
-                ChatMessage(role=MessageRole.USER, content=format_worker_feedback(dev_result))
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=format_worker_feedback(dev_result, policy=policy),
+                )
             )
         else:
             terminal_status = "call_limit" if first_source is not None else "no_candidate"
             self._event("call_limit", budget.max_calls - 1, {"calls": calls})
+
+        if evaluated_candidates:
+            selected = _select_final_candidate(evaluated_candidates, policy)
+            final_source = selected.source
+            final_hash = selected.sha256
 
         if first_source is None or final_source is None or first_hash is None or final_hash is None:
             if terminal_status not in {"provider_error", "budget_exhausted"}:

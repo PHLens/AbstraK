@@ -15,7 +15,11 @@ from typing import Any
 
 from abstrak.canary.baselines import BaselineRegistryError, validate_baseline_source
 from abstrak.canary.contracts import CaseResult, WorkerJob, WorkerResult
-from abstrak.canary.fallback import validate_candidate_source
+from abstrak.canary.target_adapters import (
+    DEFAULT_TARGET_ADAPTER_REGISTRY,
+    TargetAdapterRegistry,
+    validate_target_source,
+)
 from abstrak.canary.targets import TargetRegistryError, get_target_stack
 from abstrak.canary.tasks import (
     TaskRegistryError,
@@ -232,6 +236,7 @@ def evaluate_job(
     device: str | None = None,
     asset_root: str | Path | None = None,
     runtime_loader: RuntimeLoader = _load_runtime,
+    target_adapter_registry: TargetAdapterRegistry = DEFAULT_TARGET_ADAPTER_REGISTRY,
 ) -> WorkerResult:
     """Evaluate one hash-bound job; Torch is imported only after static preflight."""
 
@@ -239,6 +244,8 @@ def evaluate_job(
     if registry_error is not None:
         return _result(job, "worker_error", error=registry_error)
 
+    static_warnings: tuple[str, ...] = ()
+    validation_metadata: dict[str, Any] = {}
     if job.kind == "baseline":
         try:
             validate_baseline_source(
@@ -249,28 +256,45 @@ def evaluate_job(
         except BaselineRegistryError as error:
             return _result(job, "worker_error", error=str(error))
     else:
-        static = validate_candidate_source(job.candidate_source, job.target.backend)
+        static = validate_target_source(
+            job.candidate_source,
+            job.target,
+            registry=target_adapter_registry,
+        )
         static_errors = tuple(f"{issue.code}: {issue.message}" for issue in static.errors)
+        static_warnings = tuple(f"{issue.code}: {issue.message}" for issue in static.warnings)
+        validation_metadata = dict(static.metadata)
         if not static.valid:
-            return _result(job, "static_check_failed", static_errors=static_errors)
+            return _result(
+                job,
+                "static_check_failed",
+                static_errors=static_errors,
+                static_warnings=static_warnings,
+                metadata=validation_metadata,
+            )
 
     selected_device = device or job.device
     try:
         runtime = runtime_loader(kernelbench_root)
     except Exception as error:
+        metadata = dict(validation_metadata)
+        metadata["device"] = selected_device
         return _result(
             job,
             "environment_error",
             error=f"{type(error).__name__}: {error}",
-            metadata={"device": selected_device},
+            static_warnings=static_warnings,
+            metadata=metadata,
         )
     torch = runtime.torch
-    metadata = _runtime_metadata(runtime, selected_device)
+    metadata = dict(validation_metadata)
+    metadata.update(_runtime_metadata(runtime, selected_device))
     if not torch.cuda.is_available():
         return _result(
             job,
             "environment_error",
             error="CUDA is not available",
+            static_warnings=static_warnings,
             metadata=metadata,
         )
 
@@ -285,6 +309,7 @@ def evaluate_job(
             job,
             "worker_error",
             error=f"cannot load task reference: {type(error).__name__}: {error}",
+            static_warnings=static_warnings,
             metadata=metadata,
         )
 
@@ -309,6 +334,7 @@ def evaluate_job(
             job,
             "compile_error",
             error=f"{type(error).__name__}: {error}",
+            static_warnings=static_warnings,
             metadata=metadata,
         )
 
@@ -351,6 +377,7 @@ def evaluate_job(
                     compiled=True,
                     cases=tuple(case_results),
                     error=f"candidate failed on {case_id}: {type(error).__name__}: {error}",
+                    static_warnings=static_warnings,
                     metadata=metadata,
                 )
             result = _case_result(
@@ -373,6 +400,7 @@ def evaluate_job(
                 "wrong_result",
                 compiled=True,
                 cases=tuple(case_results),
+                static_warnings=static_warnings,
                 metadata=metadata,
             )
 
@@ -401,6 +429,7 @@ def evaluate_job(
             cases=tuple(case_results),
             timing_ms=timing_samples,
             timing_cv=timing_cv,
+            static_warnings=static_warnings,
             metadata=metadata,
         )
     except Exception as error:
@@ -410,6 +439,7 @@ def evaluate_job(
             compiled=True,
             cases=tuple(case_results),
             error=f"{type(error).__name__}: {error}",
+            static_warnings=static_warnings,
             metadata=metadata,
         )
     finally:
