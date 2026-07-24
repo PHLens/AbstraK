@@ -12,7 +12,7 @@ from typing import Any, Literal, TypeVar
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from abstrak.providers.contracts import sha256_json
+from abstrak.providers.contracts import CompletionClientIdentity, sha256_json
 
 IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9._-]*$"
 ENV_PATTERN = r"^[A-Z_][A-Z0-9_]*$"
@@ -173,6 +173,22 @@ def load_manifest(path: str | Path, model_type: type[ManifestT]) -> ManifestT:
 
 def manifest_sha256(manifest: ManifestModel) -> str:
     return sha256_json(manifest)
+
+
+def completion_client_identity(bundle: ManifestBundle) -> CompletionClientIdentity:
+    """Resolve the pre-call identity shared by planning and live clients."""
+
+    return CompletionClientIdentity(
+        provider_id=bundle.provider.id,
+        model_id=bundle.model.id,
+        provider_manifest_sha256=manifest_sha256(bundle.provider),
+        model_manifest_sha256=manifest_sha256(bundle.model),
+        requested_model=bundle.model.api_model,
+        model_ref=bundle.model.id,
+        returned_model_policy=bundle.model.model_id_policy,
+        expected_returned_model=bundle.model.expected_returned_model,
+        returned_model_required=bundle.model.capabilities.returned_model == "required",
+    )
 
 
 def required_environment(provider: ProviderManifest) -> tuple[str, ...]:

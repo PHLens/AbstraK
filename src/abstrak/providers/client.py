@@ -31,6 +31,7 @@ from abstrak.providers.contracts import (
 )
 from abstrak.providers.manifests import (
     ManifestBundle,
+    completion_client_identity,
     manifest_sha256,
     resolve_environment,
 )
@@ -244,6 +245,7 @@ class ProviderClient:
         _validate_base_url(self._base_url)
         self.provider_manifest_sha256 = manifest_sha256(bundle.provider)
         self.model_manifest_sha256 = manifest_sha256(bundle.model)
+        self.completion_identity = completion_client_identity(bundle)
 
     @property
     def artifact_secrets(self) -> tuple[str, ...]:

@@ -36,6 +36,27 @@ class ChatMessage(ContractModel):
     content: str = Field(min_length=1)
 
 
+class CompletionClientIdentity(ContractModel):
+    """Resolved provider/model identity exposed before a completion call."""
+
+    schema_version: Literal["completion-client-identity.v1"] = "completion-client-identity.v1"
+    provider_id: str = Field(min_length=1)
+    model_id: str = Field(min_length=1)
+    provider_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    model_manifest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    requested_model: str = Field(min_length=1)
+    model_ref: str = Field(min_length=1)
+    returned_model_policy: Literal["exact", "mutable_alias"]
+    expected_returned_model: str | None = Field(default=None, min_length=1)
+    returned_model_required: bool
+
+    @model_validator(mode="after")
+    def exact_policy_has_expected_model(self) -> CompletionClientIdentity:
+        if self.returned_model_policy == "exact" and self.expected_returned_model is None:
+            raise ValueError("exact returned-model policy requires an expected model")
+        return self
+
+
 class LogicalRequest(ContractModel):
     schema_version: Literal["logical-request.v1"] = "logical-request.v1"
     request_id: str = Field(default_factory=lambda: uuid4().hex, min_length=1)

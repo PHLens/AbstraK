@@ -40,6 +40,18 @@ def test_single_call_and_response_normalization(
     response = client.complete(_request())
 
     assert transport.call_count == 1
+    assert client.completion_identity.provider_id == response.provider_id
+    assert client.completion_identity.model_id == response.model_id
+    assert (
+        client.completion_identity.provider_manifest_sha256
+        == response.provider_manifest_sha256
+    )
+    assert client.completion_identity.model_manifest_sha256 == response.model_manifest_sha256
+    assert client.completion_identity.requested_model == response.requested_model
+    assert client.completion_identity.model_ref == manifest_bundle.model.id
+    assert client.completion_identity.returned_model_policy == "exact"
+    assert client.completion_identity.expected_returned_model == response.returned_model
+    assert client.completion_identity.returned_model_required is True
     sent = transport.requests[0]
     assert sent["api_key"] == provider_environment["TEST_API_KEY"]
     assert sent["base_url"] == provider_environment["TEST_BASE_URL"]
