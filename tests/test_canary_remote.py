@@ -63,6 +63,7 @@ def _health(
     hardware: str = "Fake A100",
     capability: tuple[int, int] = (8, 0),
     triton_version: str = "3.7.1",
+    worker_revision: str | None = None,
 ) -> str:
     if status == "healthy":
         payload = {
@@ -77,6 +78,8 @@ def _health(
             "triton_version": triton_version,
             "value": 2.0,
         }
+        if worker_revision is not None:
+            payload["worker_revision"] = worker_revision
     else:
         payload = {
             "schema_version": "canary-worker-health.v1",
@@ -353,6 +356,33 @@ def test_executor_rejects_target_version_drift() -> None:
     assert "found '3.6.0'" in str(captured.value)
 
 
+def test_ssh_executor_rejects_worker_revision_drift_after_each_job() -> None:
+    job = _job()
+    popen = PopenRecorder(
+        FakeProcess(stdout=_result(job).model_dump_json()),
+        FakeProcess(stdout=_health(worker_revision="b" * 40)),
+    )
+    executor = SshWorkerExecutor(
+        "gpu.example",
+        python_executable="/opt/abstrak/bin/python",
+        pythonpath="/srv/AbstraK/src",
+        kernelbench_root="/srv/KernelBench",
+        asset_root="/srv/AbstraK/benchmarks/capability-gate-a100",
+        popen_factory=popen,
+        expected_worker_revision="a" * 40,
+    )
+
+    with pytest.raises(WorkerExecutionError) as captured:
+        executor.execute(job)
+
+    assert captured.value.category == "configuration"
+    assert "expected worker revision" in str(captured.value)
+    assert "found 'bbbb" in str(captured.value)
+    health_command = shlex.split(popen.calls[1][0][-1])
+    assert health_command[-2:] == ["--worker-root", "/srv/AbstraK"]
+    assert executor.quarantined
+
+
 def test_timeout_kills_and_reaps_the_fresh_process_group() -> None:
     process = FakeProcess(times_out=True)
     health = FakeProcess(stdout=_health())
@@ -597,6 +627,49 @@ def test_supervised_ssh_mode_drops_privileges_and_clears_environment() -> None:
     ]
     assert "--chdir=/tmp" in remote
     assert "PYTHONPATH=/srv/AbstraK/src" in remote
+
+
+def test_ssh_matrix_binding_is_derived_from_actual_executor_configuration() -> None:
+    executor = SshWorkerExecutor(
+        "gpu.example",
+        python_executable="/opt/abstrak/bin/python",
+        pythonpath="/srv/AbstraK/src",
+        kernelbench_root="/srv/KernelBench",
+        asset_root="/srv/AbstraK/benchmarks/capability-gate-a100",
+        device="cuda:1",
+        sandbox_mode="setpriv",
+        timeout_seconds=420.0,
+        expected_worker_revision="a" * 40,
+    )
+
+    binding = executor.matrix_worker_binding
+
+    assert binding is not None
+    assert binding.worker_revision == "a" * 40
+    assert binding.transport.host == "gpu.example"
+    assert binding.transport.worker_root == "/srv/AbstraK"
+    assert binding.transport.python_executable == "/opt/abstrak/bin/python"
+    assert binding.transport.device == "cuda:1"
+    assert binding.transport.sandbox == "setpriv-supervised"
+    assert binding.transport.timeout_seconds == 420.0
+    assert binding.transport.network_isolated is False
+    assert binding.transport.filesystem_read_only is False
+
+
+def test_ssh_matrix_binding_requires_a_full_expected_worker_revision() -> None:
+    arguments = {
+        "python_executable": "/opt/abstrak/bin/python",
+        "pythonpath": "/srv/AbstraK/src",
+        "kernelbench_root": "/srv/KernelBench",
+        "asset_root": "/srv/AbstraK/benchmarks/capability-gate-a100",
+    }
+    assert SshWorkerExecutor("gpu.example", **arguments).matrix_worker_binding is None
+    with pytest.raises(ValueError, match="full lowercase Git revision"):
+        SshWorkerExecutor(
+            "gpu.example",
+            **arguments,
+            expected_worker_revision="main",
+        )
 
 
 def test_ssh_executor_rejects_paths_hidden_by_sandbox() -> None:

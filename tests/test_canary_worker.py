@@ -143,6 +143,36 @@ def test_worker_health_check_emits_one_json_value_and_uses_default_device(
     assert captured.err == ""
 
 
+def test_worker_health_check_passes_worker_root_to_revision_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    observed: list[tuple[str, str | None]] = []
+
+    def fake_health(
+        device: str,
+        *,
+        worker_root: str | None = None,
+    ) -> dict[str, object]:
+        observed.append((device, worker_root))
+        return {
+            "schema_version": "canary-worker-health.v1",
+            "status": "healthy",
+            "device": device,
+            "worker_revision": "a" * 40,
+        }
+
+    monkeypatch.setattr(worker_module, "gpu_health", fake_health)
+
+    status = worker_main(
+        ["--health-check", "--device", "cuda:1", "--worker-root", "/srv/AbstraK"]
+    )
+
+    assert status == 0
+    assert observed == [("cuda:1", "/srv/AbstraK")]
+    assert json.loads(capsys.readouterr().out)["worker_revision"] == "a" * 40
+
+
 def test_importing_worker_does_not_import_torch() -> None:
     process = subprocess.run(
         [

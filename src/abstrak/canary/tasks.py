@@ -405,8 +405,222 @@ _R1_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
 )
 
 
-_CAPABILITY_GATE_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType({})
-_CAPABILITY_GATE_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType({})
+_CAPABILITY_DEV_CASES = (
+    InputCaseSpec(id="dev-random-1", kind="random", seed=2026072401),
+    InputCaseSpec(id="dev-random-2", kind="random", seed=2026072402),
+)
+_CAPABILITY_SEALED_CASES = (
+    InputCaseSpec(id="sealed-random-1", kind="random", seed=2026072501),
+    InputCaseSpec(id="sealed-random-2", kind="random", seed=2026072502),
+    InputCaseSpec(id="sealed-random-3", kind="random", seed=2026072503),
+    InputCaseSpec(id="sealed-random-4", kind="random", seed=2026072504),
+    InputCaseSpec(id="sealed-zero", kind="zero", seed=2026072505),
+)
+
+
+def _capability_task(
+    task_id: str,
+    specification: str,
+    source_sha256: str,
+    input_shapes: tuple[tuple[int, ...], ...],
+    parameters: tuple[tuple[str, int | float | str | bool], ...],
+    *,
+    atol: float = 1e-2,
+    rtol: float = 1e-2,
+) -> TaskPackSpec:
+    return TaskPackSpec(
+        id=task_id,
+        specification=specification,
+        source_path=f"tasks/{task_id.replace('-', '_')}.py",
+        source_sha256=source_sha256,
+        dtype="fp16",
+        reference_precision="fp32",
+        input_shapes=input_shapes,
+        parameters=parameters,
+        atol=atol,
+        rtol=rtol,
+        fallback_policy="forbid_framework_ops",
+        dev_cases=_CAPABILITY_DEV_CASES,
+        sealed_cases=_CAPABILITY_SEALED_CASES,
+    )
+
+
+_CAPABILITY_GATE_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
+    {
+        "gelu-static": _capability_task(
+            "gelu-static",
+            (
+                "Given a contiguous FP16 tensor x with shape (8192, 4096), apply exact "
+                "erf-based GELU using FP32 intermediate math and return FP16 with the same shape."
+            ),
+            "929106a7135ec938bc6b323b301d8dca9e5e6126923d0556435f53e19750b60f",
+            ((8192, 4096),),
+            (
+                ("rows", 8192),
+                ("columns", 4096),
+                ("approximation", "none"),
+                ("output_dtype", "fp16"),
+            ),
+        ),
+        "gated-silu-static": _capability_task(
+            "gated-silu-static",
+            (
+                "Given contiguous FP16 tensors x and gate with shape (8192, 4096), compute "
+                "silu(x) * gate using FP32 intermediate math and return FP16 with the same shape."
+            ),
+            "7f4b063d8e6c9ea72076c0219343ba59582a2ca8a0d37f52202a89fdecdfb022",
+            ((8192, 4096), (8192, 4096)),
+            (
+                ("rows", 8192),
+                ("columns", 4096),
+                ("epilogue", "silu-times-gate"),
+                ("output_dtype", "fp16"),
+            ),
+        ),
+        "gemm-large-k-static": _capability_task(
+            "gemm-large-k-static",
+            (
+                "Given contiguous FP16 tensors A (1024, 4096) and B (4096, 4096), compute "
+                "A @ B with FP32 accumulation and return FP16 shape (1024, 4096)."
+            ),
+            "643e7d8b591b39b35932b457a4c038110a6811e3e75de4b23272a6ca61728afa",
+            ((1024, 4096), (4096, 4096)),
+            (("m", 1024), ("n", 4096), ("k", 4096), ("output_dtype", "fp16")),
+        ),
+        "gemm-bias-relu-mirror-static": _capability_task(
+            "gemm-bias-relu-mirror-static",
+            (
+                "Given contiguous FP16 tensors A (4096, 4096), B (4096, 1024), and bias "
+                "(1024,), compute A @ B with FP32 accumulation, add bias and apply ReLU "
+                "in FP32, then return FP16 shape (4096, 1024)."
+            ),
+            "dbca54684fb9175226394cbfb61678f1f03551dd18f285cbceb2a4a4ea685c57",
+            ((4096, 4096), (4096, 1024), (1024,)),
+            (
+                ("m", 4096),
+                ("n", 1024),
+                ("k", 4096),
+                ("epilogue", "bias-relu"),
+                ("output_dtype", "fp16"),
+            ),
+        ),
+        "gemm-small-k-irregular-static": _capability_task(
+            "gemm-small-k-irregular-static",
+            (
+                "Given contiguous FP16 tensors A (8191, 80) and B (80, 8179), compute "
+                "A @ B with FP32 accumulation and return FP16 shape (8191, 8179)."
+            ),
+            "130c1301537f21828ab4764e47773de4e52a23e77b3d88b96c2213204f22fe3f",
+            ((8191, 80), (80, 8179)),
+            (("m", 8191), ("n", 8179), ("k", 80), ("output_dtype", "fp16")),
+        ),
+        "row-sum-static": _capability_task(
+            "row-sum-static",
+            (
+                "Given a contiguous FP16 tensor x with shape (16384, 4096), sum the final "
+                "dimension using FP32 accumulation and return FP32 shape (16384,)."
+            ),
+            "89d80ff45a8894e8a6a73d236ad77c4258393c8598f176794d627074950518b0",
+            ((16384, 4096),),
+            (("rows", 16384), ("columns", 4096), ("output_dtype", "fp32")),
+            rtol=1e-3,
+        ),
+        "row-softmax-static": _capability_task(
+            "row-softmax-static",
+            (
+                "Given a contiguous FP16 tensor x with shape (8192, 4096), compute stable "
+                "row-wise softmax as FP32 max, exp, sum, and divide operations, then return "
+                "FP16 with the same shape."
+            ),
+            "12d59716bb27aa7322cb287108827fd69c7b259385ab4832df7ff5bda7da2c05",
+            ((8192, 4096),),
+            (("rows", 8192), ("columns", 4096), ("output_dtype", "fp16")),
+            atol=1e-3,
+        ),
+        "rmsnorm-wide-static": _capability_task(
+            "rmsnorm-wide-static",
+            (
+                "Given contiguous FP16 tensors x (8192, 4096) and gamma (4096,), apply "
+                "row-wise RMSNorm using FP32 mean-square math and epsilon 1e-5, then return "
+                "FP16 shape (8192, 4096)."
+            ),
+            "284b0523b56af85dcf23977049e7c789871629ac74e2466a22221d436fe10b85",
+            ((8192, 4096), (4096,)),
+            (
+                ("rows", 8192),
+                ("columns", 4096),
+                ("epsilon", 1e-5),
+                ("output_dtype", "fp16"),
+            ),
+        ),
+    }
+)
+CAPABILITY_GATE_TASK_IDS = tuple(_CAPABILITY_GATE_TASK_PACKS)
+
+
+def _capability_assets(
+    task_id: str,
+    source_sha256: str,
+    expert_sha256: str,
+) -> TaskAssets:
+    filename = f"{task_id.replace('-', '_')}.py"
+    return TaskAssets(
+        source=PinnedAsset(relative_path=f"tasks/{filename}", sha256=source_sha256),
+        oracles=MappingProxyType(
+            {
+                "tilelang": PinnedAsset(
+                    relative_path=f"experts/{filename}",
+                    sha256=expert_sha256,
+                )
+            }
+        ),
+    )
+
+
+_CAPABILITY_GATE_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
+    {
+        "gelu-static": _capability_assets(
+            "gelu-static",
+            "929106a7135ec938bc6b323b301d8dca9e5e6126923d0556435f53e19750b60f",
+            "64d62fc67569c90ebf094bb0bff25acf371fadb4ae1a5927407f3770e6e042e6",
+        ),
+        "gated-silu-static": _capability_assets(
+            "gated-silu-static",
+            "7f4b063d8e6c9ea72076c0219343ba59582a2ca8a0d37f52202a89fdecdfb022",
+            "5cc0f723b5de15ecbc07ab2d6ec073a0a9cc9f51e9ded077972c57dc88e7ab9f",
+        ),
+        "gemm-large-k-static": _capability_assets(
+            "gemm-large-k-static",
+            "643e7d8b591b39b35932b457a4c038110a6811e3e75de4b23272a6ca61728afa",
+            "ae8939062532b042c8fd14f8e624d6af6f4d6b7d61d0c7df6d849fbf0df743d1",
+        ),
+        "gemm-bias-relu-mirror-static": _capability_assets(
+            "gemm-bias-relu-mirror-static",
+            "dbca54684fb9175226394cbfb61678f1f03551dd18f285cbceb2a4a4ea685c57",
+            "1d44b40ec759eca28e706e477460e1ace00b00710e3835c83789a2b7aeb15529",
+        ),
+        "gemm-small-k-irregular-static": _capability_assets(
+            "gemm-small-k-irregular-static",
+            "130c1301537f21828ab4764e47773de4e52a23e77b3d88b96c2213204f22fe3f",
+            "742cb8b6b9a4529ace2853176f5fad4af4752c965188b072eb034c41d5ee96f2",
+        ),
+        "row-sum-static": _capability_assets(
+            "row-sum-static",
+            "89d80ff45a8894e8a6a73d236ad77c4258393c8598f176794d627074950518b0",
+            "c4335afd0423e751e51017128488c4d360d3ea7d30ef3ab1da3ac9efa0f763c3",
+        ),
+        "row-softmax-static": _capability_assets(
+            "row-softmax-static",
+            "12d59716bb27aa7322cb287108827fd69c7b259385ab4832df7ff5bda7da2c05",
+            "7f7ad5d75fd84c5b29ae81d49cef3c19657370ecd301ed5c13a0b9c9da93ac9a",
+        ),
+        "rmsnorm-wide-static": _capability_assets(
+            "rmsnorm-wide-static",
+            "284b0523b56af85dcf23977049e7c789871629ac74e2466a22221d436fe10b85",
+            "44f22d22a9898434f1aa43b3c28e43056a92098a753deffb6f090d991b0e662c",
+        ),
+    }
+)
 
 _TASK_REGISTRIES: Mapping[str, _TaskRegistryScope] = MappingProxyType(
     {

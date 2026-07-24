@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import Field, model_validator
 
@@ -19,7 +20,7 @@ from abstrak.canary.contracts import (
 )
 from abstrak.canary.loop import CanaryAgentLoop, CompletionClient, WorkerExecutor
 from abstrak.canary.manifests import PinnedStudySpec
-from abstrak.canary.matrix import MatrixSchedule, build_matrix_schedule
+from abstrak.canary.matrix import MatrixCell, MatrixSchedule, build_matrix_schedule
 from abstrak.canary.matrix_study import (
     AxisIdentityResolver,
     CellExecutionResolver,
@@ -45,6 +46,9 @@ from abstrak.providers.contracts import (
     ProviderCallError,
     sha256_json,
 )
+
+if TYPE_CHECKING:
+    from abstrak.canary.matrix_preflight import PreflightBundle
 
 RunStatus = Literal["complete", "paused_infrastructure", "incomplete_infrastructure"]
 
@@ -185,6 +189,19 @@ class MatrixAttemptRuntime:
                 "runtime execution inputs differ from their planned cell identity"
             ) from error
 
+    def verify_worker_context(self, context: MatrixExecutionContext) -> None:
+        """Reject a runtime whose worker route differs from the qualified environment."""
+
+        expected = MatrixWorkerBinding(
+            worker_revision=context.worker_revision,
+            transport=context.transport,
+        )
+        actual = getattr(self.worker, "matrix_worker_binding", None)
+        if actual != expected:
+            raise MatrixStudyRunError("runtime worker differs from the preflight environment")
+        if self.execution.device != context.transport.device:
+            raise MatrixStudyRunError("runtime device differs from the preflight environment")
+
 
 class AttemptRuntimeFactory(Protocol):
     def __call__(self, identity: MatrixCellArtifactIdentity) -> MatrixAttemptRuntime: ...
@@ -230,6 +247,20 @@ class MatrixExecutionContext(CanaryModel):
     gpu_jobs_serial: Literal[True] = True
     generated_code_remote_only: Literal[True] = True
     non_container_worker: Literal[True] = True
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self)
+
+
+class MatrixWorkerBinding(CanaryModel):
+    """Actual matrix worker configuration expected by a verified execution context."""
+
+    schema_version: Literal["abstrak-matrix-worker-binding.v1"] = (
+        "abstrak-matrix-worker-binding.v1"
+    )
+    worker_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    transport: MatrixTransportContext
 
     @property
     def sha256(self) -> str:
@@ -513,23 +544,15 @@ def _run_attempt(
     return outcome, store.run_directory
 
 
-def run_matrix_phase(
+def _validated_execution_guards(
     pinned: PinnedStudySpec,
     phase_id: str,
     *,
-    artifact_root: str | Path,
-    execution_context: MatrixExecutionContext,
     live: bool,
     expected_operational_request_ceiling: int,
-    resolve_task: AxisIdentityResolver,
-    resolve_target: AxisIdentityResolver,
-    resolve_agent: AxisIdentityResolver,
-    resolve_execution: CellExecutionResolver,
-    runtime_factory: AttemptRuntimeFactory,
-    schedule: MatrixSchedule | None = None,
-    progress: AttemptProgressSink | None = None,
-) -> MatrixPhaseRunSummary:
-    """Run every actionable phase attempt in order after explicit live authorization."""
+    schedule: MatrixSchedule | None,
+) -> MatrixSchedule:
+    """Apply billable-run guards before any artifact or runtime resolution."""
 
     if live is not True:
         raise MatrixStudyRunError("matrix phase execution requires live authorization")
@@ -549,6 +572,96 @@ def run_matrix_phase(
             "expected operational request ceiling must equal the frozen full-phase ceiling "
             f"({full_phase_ceiling})"
         )
+    return frozen_schedule
+
+
+def _load_verified_preflight(
+    directory: str | Path,
+    pinned: PinnedStudySpec,
+    schedule: MatrixSchedule,
+) -> PreflightBundle:
+    """Load through the strict sealed-artifact verifier without a module import cycle."""
+
+    from abstrak.canary.matrix_preflight import load_preflight_bundle
+
+    return load_preflight_bundle(directory, pinned, schedule)
+
+
+def _bind_preflight_resolvers(
+    bundle: PreflightBundle,
+    *,
+    resolve_task: AxisIdentityResolver,
+    resolve_target: AxisIdentityResolver,
+    resolve_execution: CellExecutionResolver,
+) -> tuple[AxisIdentityResolver, AxisIdentityResolver, CellExecutionResolver]:
+    """Bind every planned cell to the qualified assets and per-task latency floor."""
+
+    task_assets = {item.task_id: item for item in bundle.assets.tasks}
+    target_assets = {item.target_id: item for item in bundle.assets.targets}
+    task_floors = {item.task_id: item for item in bundle.floor.tasks}
+
+    def bound_task(identifier: str) -> MatrixAxisIdentity:
+        resolved = resolve_task(identifier)
+        expected = task_assets.get(identifier)
+        if expected is None or resolved.sha256 != expected.task_pack_sha256:
+            raise MatrixStudyRunError("task resolver differs from the preflight asset manifest")
+        return resolved
+
+    def bound_target(identifier: str) -> MatrixAxisIdentity:
+        resolved = resolve_target(identifier)
+        expected = target_assets.get(identifier)
+        if expected is None or resolved.sha256 != expected.target_stack_sha256:
+            raise MatrixStudyRunError("target resolver differs from the preflight asset manifest")
+        return resolved
+
+    def bound_execution(cell: MatrixCell) -> MatrixCellExecutionSpec:
+        resolved = resolve_execution(cell)
+        floor = task_floors.get(cell.task_id)
+        if floor is None or floor.status != "valid" or floor.ceiling is None:
+            raise MatrixStudyRunError("cell has no valid preflight latency floor")
+        if resolved.execution_context_sha256 != bundle.execution_context.sha256:
+            raise MatrixStudyRunError("cell execution differs from the preflight context")
+        if resolved.device != bundle.execution_context.transport.device:
+            raise MatrixStudyRunError("cell device differs from the preflight environment")
+        actual_ceiling = resolved.policy.latency_ceiling_ms
+        expected_ceiling = floor.ceiling.latency_ceiling_ms
+        if actual_ceiling is None or not math.isclose(
+            actual_ceiling,
+            expected_ceiling,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise MatrixStudyRunError("cell latency ceiling differs from the preflight floor")
+        return resolved
+
+    return bound_task, bound_target, bound_execution
+
+
+def _run_authorized_matrix_phase(
+    pinned: PinnedStudySpec,
+    phase_id: str,
+    *,
+    artifact_root: str | Path,
+    execution_context: MatrixExecutionContext,
+    live: bool,
+    expected_operational_request_ceiling: int,
+    resolve_task: AxisIdentityResolver,
+    resolve_target: AxisIdentityResolver,
+    resolve_agent: AxisIdentityResolver,
+    resolve_execution: CellExecutionResolver,
+    runtime_factory: AttemptRuntimeFactory,
+    schedule: MatrixSchedule | None = None,
+    progress: AttemptProgressSink | None = None,
+) -> MatrixPhaseRunSummary:
+    """Execute a phase whose preflight authorization has already been verified."""
+
+    frozen_schedule = _validated_execution_guards(
+        pinned,
+        phase_id,
+        live=live,
+        expected_operational_request_ceiling=expected_operational_request_ceiling,
+        schedule=schedule,
+    )
 
     loader = sealed_cell_identity_loader(artifact_root)
     try:
@@ -602,6 +715,7 @@ def run_matrix_phase(
             raise MatrixStudyRunError(
                 f"runtime factory returned {type(runtime).__name__}, expected MatrixAttemptRuntime"
             )
+        runtime.verify_worker_context(execution_context)
         outcome, directory = _run_attempt(
             identity,
             runtime,
@@ -678,4 +792,56 @@ def run_matrix_phase(
             attempt.outcome.usage_complete for attempt in cumulative_attempts
         ),
         records=tuple(records),
+    )
+
+
+def run_matrix_phase(
+    pinned: PinnedStudySpec,
+    phase_id: str,
+    *,
+    artifact_root: str | Path,
+    preflight_directory: str | Path,
+    live: bool,
+    expected_operational_request_ceiling: int,
+    resolve_task: AxisIdentityResolver,
+    resolve_target: AxisIdentityResolver,
+    resolve_agent: AxisIdentityResolver,
+    resolve_execution: CellExecutionResolver,
+    runtime_factory: AttemptRuntimeFactory,
+    schedule: MatrixSchedule | None = None,
+    progress: AttemptProgressSink | None = None,
+) -> MatrixPhaseRunSummary:
+    """Verify a sealed preflight bundle, then run every actionable phase attempt in order."""
+
+    frozen_schedule = _validated_execution_guards(
+        pinned,
+        phase_id,
+        live=live,
+        expected_operational_request_ceiling=expected_operational_request_ceiling,
+        schedule=schedule,
+    )
+    try:
+        bundle = _load_verified_preflight(preflight_directory, pinned, frozen_schedule)
+    except Exception as error:
+        raise MatrixStudyRunError("matrix phase requires a verified sealed preflight") from error
+    bound_task, bound_target, bound_execution = _bind_preflight_resolvers(
+        bundle,
+        resolve_task=resolve_task,
+        resolve_target=resolve_target,
+        resolve_execution=resolve_execution,
+    )
+    return _run_authorized_matrix_phase(
+        pinned,
+        phase_id,
+        artifact_root=artifact_root,
+        execution_context=bundle.execution_context,
+        live=live,
+        expected_operational_request_ceiling=expected_operational_request_ceiling,
+        resolve_task=bound_task,
+        resolve_target=bound_target,
+        resolve_agent=resolve_agent,
+        resolve_execution=bound_execution,
+        runtime_factory=runtime_factory,
+        schedule=frozen_schedule,
+        progress=progress,
     )

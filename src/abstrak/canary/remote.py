@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -12,11 +13,14 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import ValidationError
 
 from abstrak.canary.contracts import WorkerJob, WorkerResult
+
+if TYPE_CHECKING:
+    from abstrak.canary.matrix_runner import MatrixWorkerBinding
 
 WORKER_MODULE = "abstrak.canary.worker"
 _DIAGNOSTIC_LIMIT = 4000
@@ -181,6 +185,12 @@ def _parse_health(stdout: str, expected_device: str) -> dict[str, object]:
         ):
             if not isinstance(value.get(field), str) or not value[field]:
                 raise ValueError(f"healthy result requires {field}")
+        worker_revision = value.get("worker_revision")
+        if worker_revision is not None and (
+            not isinstance(worker_revision, str)
+            or re.fullmatch(r"[0-9a-f]{40}", worker_revision) is None
+        ):
+            raise ValueError("health worker revision must be a full lowercase Git revision")
         if (
             isinstance(health_value, bool)
             or not isinstance(health_value, int | float)
@@ -356,6 +366,15 @@ class _SubprocessExecutor:
             errors.append(
                 f"expected Triton {self.expected_triton_version!r}, "
                 f"found {health['triton_version']!r}"
+            )
+        expected_worker_revision = getattr(self, "expected_worker_revision", None)
+        if (
+            expected_worker_revision is not None
+            and health.get("worker_revision") != expected_worker_revision
+        ):
+            errors.append(
+                f"expected worker revision {expected_worker_revision!r}, "
+                f"found {health.get('worker_revision')!r}"
             )
         if errors:
             health["compatibility_error"] = "; ".join(errors)
@@ -552,6 +571,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
         expected_hardware_substring: str | None = None,
         expected_compute_capability: tuple[int, int] | None = None,
         expected_triton_version: str | None = None,
+        expected_worker_revision: str | None = None,
     ) -> None:
         super().__init__(
             timeout_seconds=timeout_seconds,
@@ -583,6 +603,10 @@ class SshWorkerExecutor(_SubprocessExecutor):
                 raise ValueError(f"{name} cannot be empty")
         if sandbox_mode not in {"bubblewrap", "setpriv"}:
             raise ValueError("sandbox_mode must be bubblewrap or setpriv")
+        if expected_worker_revision is not None and re.fullmatch(
+            r"[0-9a-f]{40}", expected_worker_revision
+        ) is None:
+            raise ValueError("expected_worker_revision must be a full lowercase Git revision")
         for name, value in {
             "python_executable": python_executable,
             "pythonpath": pythonpath,
@@ -614,6 +638,34 @@ class SshWorkerExecutor(_SubprocessExecutor):
         self.setpriv_executable = setpriv_executable
         self.sandbox_user = sandbox_user
         self.sandbox_group = sandbox_group
+        self.expected_worker_revision = expected_worker_revision
+
+    @property
+    def matrix_worker_binding(self) -> MatrixWorkerBinding | None:
+        """Return the matrix identity derived from this executor's actual configuration."""
+
+        if self.expected_worker_revision is None:
+            return None
+        from abstrak.canary.matrix_runner import MatrixTransportContext, MatrixWorkerBinding
+
+        isolated = self.sandbox_mode == "bubblewrap"
+        transport = MatrixTransportContext(
+            host=self.host,
+            worker_root=str(PurePosixPath(self.pythonpath).parent),
+            python_executable=self.python_executable,
+            pythonpath=self.pythonpath,
+            kernelbench_root=self.kernelbench_root,
+            asset_root=self.asset_root,
+            sandbox=("bubblewrap" if isolated else "setpriv-supervised"),
+            device=self.device,
+            timeout_seconds=self.timeout_seconds,
+            network_isolated=isolated,
+            filesystem_read_only=isolated,
+        )
+        return MatrixWorkerBinding(
+            worker_revision=self.expected_worker_revision,
+            transport=transport,
+        )
 
     def _worker_environment_command(self, arguments: Sequence[str]) -> list[str]:
         python_bin = str(PurePosixPath(self.python_executable).parent)
@@ -802,12 +854,17 @@ class SshWorkerExecutor(_SubprocessExecutor):
 
     def _health_command(self, job: WorkerJob) -> Sequence[str]:
         self._require_device(job)
+        arguments = [
+            "--health-check",
+            "--device",
+            self.device,
+        ]
+        if self.expected_worker_revision is not None:
+            arguments.extend(
+                ("--worker-root", str(PurePosixPath(self.pythonpath).parent))
+            )
         return self._remote_command(
-            [
-                "--health-check",
-                "--device",
-                self.device,
-            ],
+            arguments,
             controller_timeout_seconds=self.health_timeout_seconds,
             sandbox=False,
         )

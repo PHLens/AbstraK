@@ -23,6 +23,8 @@ from abstrak.canary.matrix_runner import (
     MatrixExecutionContext,
     MatrixStudyRunError,
     MatrixTransportContext,
+    MatrixWorkerBinding,
+    _run_authorized_matrix_phase,
     build_matrix_phase_contract,
     run_matrix_phase,
 )
@@ -282,8 +284,18 @@ class _Activity:
 
 
 class _PassingWorker:
-    def __init__(self, activity: _Activity) -> None:
+    def __init__(
+        self,
+        activity: _Activity,
+        *,
+        binding: MatrixWorkerBinding | None = None,
+    ) -> None:
         self.activity = activity
+        context = _context()
+        self.matrix_worker_binding = binding or MatrixWorkerBinding(
+            worker_revision=context.worker_revision,
+            transport=context.transport,
+        )
 
     def execute(self, job: WorkerJob) -> WorkerResult:
         self.activity.active += 1
@@ -351,7 +363,7 @@ def _run(
     expected: int = 4,
     progress=None,
 ):
-    return run_matrix_phase(
+    return _run_authorized_matrix_phase(
         pinned,
         "core",
         artifact_root=root,
@@ -381,7 +393,7 @@ def test_live_and_full_operational_guards_precede_artifacts_and_runtime(
             pinned,
             "core",
             artifact_root=root,
-            execution_context=_context(),
+            preflight_directory=tmp_path / "missing-preflight",
             live=live,
             expected_operational_request_ceiling=expected,
             resolve_task=unexpected,
@@ -399,6 +411,8 @@ def test_live_and_full_operational_guards_precede_artifacts_and_runtime(
         guarded_run(live=True, expected=True)
     with pytest.raises(MatrixStudyRunError, match=r"full-phase ceiling \(4\)"):
         guarded_run(live=True, expected=2)
+    with pytest.raises(MatrixStudyRunError, match="verified sealed preflight"):
+        guarded_run(live=True, expected=4)
 
     assert not root.exists()
 
@@ -568,6 +582,33 @@ def test_runtime_identity_mismatch_fails_before_attempt_directory(tmp_path: Path
         )
 
     with pytest.raises(MatrixStudyRunError, match="runtime execution inputs differ"):
+        _run(pinned, root, mismatched_factory)
+
+    assert not (root / pinned.spec.study_id / first_id).exists()
+
+
+def test_runtime_worker_transport_must_match_preflight_context(tmp_path: Path) -> None:
+    pinned = _pinned(tmp_path)
+    root = tmp_path / "artifacts"
+    first_id = build_matrix_schedule(pinned.spec).cells_for_phase("core")[0].trajectory_id
+
+    def mismatched_factory(identity):
+        transport = _context().transport.model_copy(update={"host": "other-gpu.example"})
+        binding = MatrixWorkerBinding(
+            worker_revision=_context().worker_revision,
+            transport=transport,
+        )
+        return MatrixAttemptRuntime(
+            task=get_task_pack(identity.cell.task_id),
+            target=get_target_stack(identity.cell.target_id),
+            agent_binding=_binding(identity.cell.agent_id),
+            execution=_execution(identity.cell),
+            initial_messages=_messages(identity.cell.target_id),
+            client=_SuccessClient(),
+            worker=_PassingWorker(_Activity(), binding=binding),
+        )
+
+    with pytest.raises(MatrixStudyRunError, match="worker differs"):
         _run(pinned, root, mismatched_factory)
 
     assert not (root / pinned.spec.study_id / first_id).exists()

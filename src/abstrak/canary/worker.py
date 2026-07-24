@@ -9,6 +9,8 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -79,7 +81,21 @@ def run_worker_job(
     return result.verify_for_job(job)
 
 
-def gpu_health(device: str) -> dict[str, object]:
+def _read_worker_revision(worker_root: str | Path) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(worker_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    revision = completed.stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+        raise RuntimeError("worker checkout did not report a full lowercase Git revision")
+    return revision
+
+
+def gpu_health(device: str, *, worker_root: str | Path | None = None) -> dict[str, object]:
     """Run a fresh-process allocation and synchronization probe."""
 
     try:
@@ -94,7 +110,7 @@ def gpu_health(device: str) -> dict[str, object]:
         if observed != 2.0:
             raise RuntimeError(f"GPU probe returned {observed}, expected 2.0")
         capability = torch.cuda.get_device_capability(selected)
-        return {
+        result: dict[str, object] = {
             "schema_version": "canary-worker-health.v1",
             "status": "healthy",
             "device": device,
@@ -106,6 +122,9 @@ def gpu_health(device: str) -> dict[str, object]:
             "triton_version": importlib.metadata.version("triton"),
             "value": observed,
         }
+        if worker_root is not None:
+            result["worker_revision"] = _read_worker_revision(worker_root)
+        return result
     except Exception as error:
         return {
             "schema_version": "canary-worker-health.v1",
@@ -121,6 +140,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--kernelbench-root")
     parser.add_argument("--asset-root")
     parser.add_argument("--device")
+    parser.add_argument("--worker-root")
     parser.add_argument("--health-check", action="store_true")
     return parser
 
@@ -129,7 +149,12 @@ def main(argv: list[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     if arguments.health_check:
         with contextlib.redirect_stdout(sys.stderr):
-            result = gpu_health(arguments.device or "cuda:0")
+            device = arguments.device or "cuda:0"
+            result = (
+                gpu_health(device, worker_root=arguments.worker_root)
+                if arguments.worker_root is not None
+                else gpu_health(device)
+            )
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
         return int(result["status"] != "healthy")
     if not arguments.kernelbench_root:

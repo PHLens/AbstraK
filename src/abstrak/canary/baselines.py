@@ -18,7 +18,19 @@ FORMAL_TASK_IDS = (
     "layernorm-static",
     "rmsnorm-static",
 )
+CAPABILITY_TASK_IDS = (
+    "gelu-static",
+    "gated-silu-static",
+    "gemm-large-k-static",
+    "gemm-bias-relu-mirror-static",
+    "gemm-small-k-irregular-static",
+    "row-sum-static",
+    "row-softmax-static",
+    "rmsnorm-wide-static",
+)
 BASELINE_VARIANTS = ("compile", "eager", "vendor")
+R1_SCOPE = "r1"
+CAPABILITY_GATE_SCOPE = "capability-gate"
 
 
 class BaselineRegistryError(ValueError):
@@ -60,7 +72,7 @@ def _model_source(
     )
 
 
-_REFERENCE_BODIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
+_R1_REFERENCE_BODIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     {
         "rmsnorm-static": (
             "x: torch.Tensor, gamma: torch.Tensor",
@@ -101,7 +113,7 @@ _REFERENCE_BODIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
     }
 )
 
-_VENDOR_BODIES: Mapping[str, tuple[str, tuple[str, ...], bool]] = MappingProxyType(
+_R1_VENDOR_BODIES: Mapping[str, tuple[str, tuple[str, ...], bool]] = MappingProxyType(
     {
         "rmsnorm-static": (
             "x: torch.Tensor, gamma: torch.Tensor",
@@ -130,6 +142,126 @@ _VENDOR_BODIES: Mapping[str, tuple[str, tuple[str, ...], bool]] = MappingProxyTy
     }
 )
 
+_CAPABILITY_REFERENCE_BODIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
+    {
+        "gelu-static": (
+            "x: torch.Tensor",
+            (
+                "x_fp32 = x.to(torch.float32)",
+                "scale = 0.7071067811865476",
+                "return (0.5 * x_fp32 * (1.0 + torch.erf(x_fp32 * scale))).to(torch.float16)",
+            ),
+        ),
+        "gated-silu-static": (
+            "x: torch.Tensor, gate: torch.Tensor",
+            (
+                "x_fp32 = x.to(torch.float32)",
+                "gate_fp32 = gate.to(torch.float32)",
+                "silu = x_fp32 / (1.0 + torch.exp(-x_fp32))",
+                "return (silu * gate_fp32).to(torch.float16)",
+            ),
+        ),
+        "gemm-large-k-static": (
+            "a: torch.Tensor, b: torch.Tensor",
+            (
+                "product = torch.matmul(a.to(torch.float32), b.to(torch.float32))",
+                "return product.to(torch.float16)",
+            ),
+        ),
+        "gemm-bias-relu-mirror-static": (
+            "a: torch.Tensor, b: torch.Tensor, bias: torch.Tensor",
+            (
+                "product = torch.matmul(a.to(torch.float32), b.to(torch.float32))",
+                "affine = product + bias.to(torch.float32)",
+                "return torch.relu(affine).to(torch.float16)",
+            ),
+        ),
+        "gemm-small-k-irregular-static": (
+            "a: torch.Tensor, b: torch.Tensor",
+            (
+                "product = torch.matmul(a.to(torch.float32), b.to(torch.float32))",
+                "return product.to(torch.float16)",
+            ),
+        ),
+        "row-sum-static": (
+            "x: torch.Tensor",
+            ("return torch.sum(x, dim=1, dtype=torch.float32)",),
+        ),
+        "row-softmax-static": (
+            "x: torch.Tensor",
+            (
+                "x_fp32 = x.to(torch.float32)",
+                "shifted = x_fp32 - torch.amax(x_fp32, dim=1, keepdim=True)",
+                "numerator = torch.exp(shifted)",
+                "return (numerator / torch.sum(numerator, dim=1, keepdim=True)).to(torch.float16)",
+            ),
+        ),
+        "rmsnorm-wide-static": (
+            "x: torch.Tensor, gamma: torch.Tensor",
+            (
+                "x_fp32 = x.to(torch.float32)",
+                "mean_square = torch.mean(x_fp32 * x_fp32, dim=1, keepdim=True)",
+                "normalized = x_fp32 * torch.rsqrt(mean_square + 1e-5)",
+                "return (normalized * gamma.to(torch.float32)).to(torch.float16)",
+            ),
+        ),
+    }
+)
+
+_CAPABILITY_VENDOR_BODIES: Mapping[str, tuple[str, tuple[str, ...], bool]] = MappingProxyType(
+    {
+        "gelu-static": (
+            "x: torch.Tensor",
+            ("return F.gelu(x.to(torch.float32), approximate=\"none\").to(torch.float16)",),
+            True,
+        ),
+        "gated-silu-static": (
+            "x: torch.Tensor, gate: torch.Tensor",
+            (
+                "return (F.silu(x.to(torch.float32)) * gate.to(torch.float32)).to(torch.float16)",
+            ),
+            True,
+        ),
+        "gemm-large-k-static": (
+            "a: torch.Tensor, b: torch.Tensor",
+            ("return torch.matmul(a, b)",),
+            False,
+        ),
+        "gemm-bias-relu-mirror-static": (
+            "a: torch.Tensor, b: torch.Tensor, bias: torch.Tensor",
+            (
+                "product = torch.matmul(a, b)",
+                "return torch.relu(product.to(torch.float32) + "
+                "bias.to(torch.float32)).to(torch.float16)",
+            ),
+            False,
+        ),
+        "gemm-small-k-irregular-static": (
+            "a: torch.Tensor, b: torch.Tensor",
+            ("return torch.matmul(a, b)",),
+            False,
+        ),
+        "row-sum-static": (
+            "x: torch.Tensor",
+            ("return torch.sum(input=x, dim=-1, dtype=torch.float32)",),
+            False,
+        ),
+        "row-softmax-static": (
+            "x: torch.Tensor",
+            ("return F.softmax(x, dim=1, dtype=torch.float32).to(torch.float16)",),
+            True,
+        ),
+        "rmsnorm-wide-static": (
+            "x: torch.Tensor, gamma: torch.Tensor",
+            (
+                "return F.rms_norm(x.to(torch.float32), (4096,), "
+                "gamma.to(torch.float32), eps=1e-5).to(torch.float16)",
+            ),
+            True,
+        ),
+    }
+)
+
 
 def _make_record(task_id: str, variant: str, source: str) -> BaselineSource:
     return BaselineSource(
@@ -140,12 +272,17 @@ def _make_record(task_id: str, variant: str, source: str) -> BaselineSource:
     )
 
 
-def _build_registry() -> Mapping[tuple[str, str], BaselineSource]:
+def _build_registry(
+    reference_bodies: Mapping[str, tuple[str, tuple[str, ...]]],
+    vendor_bodies: Mapping[str, tuple[str, tuple[str, ...], bool]],
+) -> Mapping[tuple[str, str], BaselineSource]:
     records: dict[tuple[str, str], BaselineSource] = {}
-    for task_id, (arguments, body) in _REFERENCE_BODIES.items():
+    if set(reference_bodies) != set(vendor_bodies):
+        raise BaselineRegistryError("reference and vendor baseline task IDs differ")
+    for task_id, (arguments, body) in reference_bodies.items():
         eager = _model_source(task_id, arguments, body)
         compiled = _model_source(task_id, arguments, body, compiled=True)
-        vendor_arguments, vendor_body, functional = _VENDOR_BODIES[task_id]
+        vendor_arguments, vendor_body, functional = vendor_bodies[task_id]
         vendor = _model_source(
             task_id,
             vendor_arguments,
@@ -161,13 +298,33 @@ def _build_registry() -> Mapping[tuple[str, str], BaselineSource]:
     return MappingProxyType(records)
 
 
-_BASELINES = _build_registry()
+_R1_BASELINES = _build_registry(_R1_REFERENCE_BODIES, _R1_VENDOR_BODIES)
+_CAPABILITY_BASELINES = _build_registry(
+    _CAPABILITY_REFERENCE_BODIES,
+    _CAPABILITY_VENDOR_BODIES,
+)
+if set(_R1_BASELINES) & set(_CAPABILITY_BASELINES):
+    raise BaselineRegistryError("baseline IDs must be unique across registry scopes")
+_BASELINE_REGISTRIES: Mapping[str, Mapping[tuple[str, str], BaselineSource]] = MappingProxyType(
+    {
+        R1_SCOPE: _R1_BASELINES,
+        CAPABILITY_GATE_SCOPE: _CAPABILITY_BASELINES,
+    }
+)
+_BASELINES = MappingProxyType({**_R1_BASELINES, **_CAPABILITY_BASELINES})
 
 
-def list_baseline_task_ids() -> tuple[str, ...]:
+def _registry_for_scope(scope: str) -> Mapping[tuple[str, str], BaselineSource]:
+    try:
+        return _BASELINE_REGISTRIES[scope]
+    except KeyError:
+        raise BaselineRegistryError(f"unknown baseline registry scope: {scope}") from None
+
+
+def list_baseline_task_ids(scope: str = R1_SCOPE) -> tuple[str, ...]:
     """Return task IDs with registered common-baseline candidates."""
 
-    return tuple(sorted({task_id for task_id, _ in _BASELINES}))
+    return tuple(sorted({task_id for task_id, _ in _registry_for_scope(scope)}))
 
 
 def list_baseline_variants(task_id: str) -> tuple[str, ...]:
@@ -212,16 +369,18 @@ def validate_baseline_source(
     raise BaselineRegistryError(f"unregistered baseline source for task: {task_id}")
 
 
-def validate_baseline_registry() -> None:
+def validate_baseline_registry(*, scope: str = R1_SCOPE) -> None:
     """Check formal coverage, source hashes, syntax, and the ModelNew entry point."""
 
-    if list_baseline_task_ids() != tuple(sorted(FORMAL_TASK_IDS)):
+    expected_task_ids = FORMAL_TASK_IDS if scope == R1_SCOPE else CAPABILITY_TASK_IDS
+    registry = _registry_for_scope(scope)
+    if list_baseline_task_ids(scope=scope) != tuple(sorted(expected_task_ids)):
         raise BaselineRegistryError("baseline registry does not cover exactly the formal tasks")
-    for task_id in FORMAL_TASK_IDS:
+    for task_id in expected_task_ids:
         if list_baseline_variants(task_id) != BASELINE_VARIANTS:
             raise BaselineRegistryError(f"baseline variants are incomplete for task: {task_id}")
         for variant in BASELINE_VARIANTS:
-            record = _BASELINES[(task_id, variant)]
+            record = registry[(task_id, variant)]
             if record.task_id != task_id or record.variant != variant:
                 raise BaselineRegistryError(f"baseline registry key mismatch: {task_id}/{variant}")
             actual_sha256 = hashlib.sha256(record.source.encode("utf-8")).hexdigest()

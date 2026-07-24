@@ -9,6 +9,8 @@ import pytest
 
 from abstrak.canary.baselines import (
     BASELINE_VARIANTS,
+    CAPABILITY_GATE_SCOPE,
+    CAPABILITY_TASK_IDS,
     FORMAL_TASK_IDS,
     BaselineRegistryError,
     get_baseline_source,
@@ -48,6 +50,31 @@ def test_registry_has_three_hash_bound_sources_for_each_formal_task() -> None:
     validate_baseline_registry()
 
 
+def test_capability_registry_has_three_hash_bound_sources_per_task() -> None:
+    assert list_baseline_task_ids(scope=CAPABILITY_GATE_SCOPE) == tuple(
+        sorted(CAPABILITY_TASK_IDS)
+    )
+    records = []
+    for task_id in CAPABILITY_TASK_IDS:
+        assert list_baseline_variants(task_id) == BASELINE_VARIANTS
+        for variant in BASELINE_VARIANTS:
+            record = get_baseline_source(task_id, variant)
+            assert validate_baseline_source(
+                task_id,
+                record.source,
+                source_sha256=record.source_sha256,
+            ) == record
+            assert any(
+                isinstance(node, ast.ClassDef) and node.name == "ModelNew"
+                for node in ast.parse(record.source).body
+            )
+            records.append(record)
+
+    assert len(records) == 24
+    assert len({record.source_sha256 for record in records}) == 24
+    validate_baseline_registry(scope=CAPABILITY_GATE_SCOPE)
+
+
 def test_variants_use_the_frozen_execution_paths() -> None:
     for task_id in FORMAL_TASK_IDS:
         eager = load_baseline_source(task_id, "eager")
@@ -74,6 +101,20 @@ def test_registry_rejects_unknown_or_modified_sources() -> None:
         validate_baseline_source("rmsnorm-static", source, source_sha256="0" * 64)
     with pytest.raises(BaselineRegistryError, match="no baselines registered"):
         list_baseline_variants("row-reduction-scale")
+    with pytest.raises(BaselineRegistryError, match="unknown baseline registry scope"):
+        list_baseline_task_ids(scope="missing")
+
+
+def test_capability_variants_preserve_declared_math_and_output_precision() -> None:
+    assert 'approximate="none"' in load_baseline_source("gelu-static", "vendor")
+    assert "F.silu" in load_baseline_source("gated-silu-static", "vendor")
+    assert "dtype=torch.float32" in load_baseline_source("row-sum-static", "vendor")
+    assert "F.softmax" in load_baseline_source("row-softmax-static", "vendor")
+    assert "F.rms_norm" in load_baseline_source("rmsnorm-wide-static", "vendor")
+    for task_id in CAPABILITY_TASK_IDS:
+        assert '@torch.compile(mode="max-autotune-no-cudagraphs")' in load_baseline_source(
+            task_id, "compile"
+        )
 
 
 def test_importing_registry_does_not_import_torch() -> None:

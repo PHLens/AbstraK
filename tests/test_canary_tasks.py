@@ -10,6 +10,7 @@ import pytest
 import abstrak.canary.tasks as task_registry
 from abstrak.canary.tasks import (
     CAPABILITY_GATE_SCOPE,
+    CAPABILITY_GATE_TASK_IDS,
     R1_SCOPE,
     PinnedAsset,
     TaskRegistryError,
@@ -35,7 +36,9 @@ def test_row_reduction_task_pack_freezes_cases_and_semantics() -> None:
         "row-reduction-scale",
     )
     assert list_task_ids(scope=R1_SCOPE) == list_task_ids()
-    assert list_task_ids(scope=CAPABILITY_GATE_SCOPE) == ()
+    assert list_task_ids(scope=CAPABILITY_GATE_SCOPE) == tuple(
+        sorted(CAPABILITY_GATE_TASK_IDS)
+    )
     assert task.dtype == "fp16"
     assert "sum each row" in task.specification
     assert task.reference_precision == "fp32"
@@ -112,6 +115,56 @@ def test_scientific_task_packs_match_the_frozen_matrix() -> None:
             assert "class ModelNew" in load_oracle_source(task_id, backend)
 
 
+def test_capability_task_packs_match_the_frozen_core_and_reserve_matrix() -> None:
+    expected_shapes = {
+        "gelu-static": ((8192, 4096),),
+        "gated-silu-static": ((8192, 4096), (8192, 4096)),
+        "gemm-large-k-static": ((1024, 4096), (4096, 4096)),
+        "gemm-bias-relu-mirror-static": ((4096, 4096), (4096, 1024), (1024,)),
+        "gemm-small-k-irregular-static": ((8191, 80), (80, 8179)),
+        "row-sum-static": ((16384, 4096),),
+        "row-softmax-static": ((8192, 4096),),
+        "rmsnorm-wide-static": ((8192, 4096), (4096,)),
+    }
+    expected_tolerances = {
+        "row-sum-static": (1e-2, 1e-3),
+        "row-softmax-static": (1e-3, 1e-2),
+    }
+
+    validate_task_registry(scope=CAPABILITY_GATE_SCOPE)
+    assert set(CAPABILITY_GATE_TASK_IDS) == set(expected_shapes)
+    for task_id, shapes in expected_shapes.items():
+        task = get_task_pack(task_id)
+        assert task.input_shapes == shapes
+        assert task.dtype == "fp16"
+        assert task.reference_precision == "fp32"
+        assert (task.atol, task.rtol) == expected_tolerances.get(task_id, (1e-2, 1e-2))
+        assert task.parameter_map["output_dtype"] == (
+            "fp32" if task_id == "row-sum-static" else "fp16"
+        )
+        assert [case.kind for case in task.dev_cases] == ["random", "random"]
+        assert [case.kind for case in task.sealed_cases] == [
+            "random",
+            "random",
+            "random",
+            "random",
+            "zero",
+        ]
+        assert len({case.seed for case in task.all_cases}) == 7
+        assert "def make_inputs(" in load_task_source(task_id)
+        assert "class ModelNew" in load_oracle_source(task_id, "tilelang")
+
+
+def test_capability_public_view_never_exposes_private_cases_or_sources() -> None:
+    for task_id in CAPABILITY_GATE_TASK_IDS:
+        task = get_task_pack(task_id)
+        public = task.public_view().model_dump_json()
+        assert "source" not in public
+        assert "dev-random" not in public
+        assert "sealed-" not in public
+        assert all(str(case.seed) not in public for case in task.all_cases)
+
+
 def test_unknown_task_and_oracle_are_rejected() -> None:
     with pytest.raises(TaskRegistryError, match="unknown task pack"):
         get_task_pack("missing")
@@ -139,8 +192,12 @@ def test_registry_validation_is_isolated_by_scope(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(task_registry, "load_pinned_asset", record_load)
 
     validate_task_registry(scope=CAPABILITY_GATE_SCOPE)
-    assert loaded_paths == []
+    assert len(loaded_paths) == 16
+    assert {path.split("/", 1)[0] for path in loaded_paths} == {"tasks", "experts"}
+    assert {root.name for root in loaded_roots} == {"capability-gate-a100"}
 
+    loaded_paths.clear()
+    loaded_roots.clear()
     validate_task_registry()
     assert len(loaded_paths) == 24
     assert {path.split("/", 1)[0] for path in loaded_paths} == {"tasks", "oracles"}
