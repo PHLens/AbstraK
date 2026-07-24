@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -14,7 +15,7 @@ import abstrak.canary.worker as worker_module
 from abstrak.canary.contracts import CaseResult, WorkerJob, WorkerResult
 from abstrak.canary.targets import get_target_stack
 from abstrak.canary.tasks import get_task_pack, load_oracle_source
-from abstrak.canary.worker import load_job_payload, run_worker_job
+from abstrak.canary.worker import _read_worker_revision, load_job_payload, run_worker_job
 from abstrak.canary.worker import main as worker_main
 
 
@@ -171,6 +172,28 @@ def test_worker_health_check_passes_worker_root_to_revision_probe(
     assert status == 0
     assert observed == [("cuda:1", "/srv/AbstraK")]
     assert json.loads(capsys.readouterr().out)["worker_revision"] == "a" * 40
+
+
+def test_worker_revision_requires_a_clean_checkout(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "config", "user.name", "Test"],
+        check=True,
+    )
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "initial"], check=True)
+
+    assert len(_read_worker_revision(tmp_path)) == 40
+
+    (tmp_path / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="must be clean"):
+        _read_worker_revision(tmp_path)
 
 
 def test_importing_worker_does_not_import_torch() -> None:

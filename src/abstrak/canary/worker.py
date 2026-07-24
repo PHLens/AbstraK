@@ -92,10 +92,62 @@ def _read_worker_revision(worker_root: str | Path) -> str:
     revision = completed.stdout.strip()
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
         raise RuntimeError("worker checkout did not report a full lowercase Git revision")
+    status = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(worker_root),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    ).stdout
+    if status:
+        raise RuntimeError("worker checkout must be clean")
     return revision
 
 
-def gpu_health(device: str, *, worker_root: str | Path | None = None) -> dict[str, object]:
+def _read_driver_version() -> str:
+    completed = subprocess.run(
+        ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    versions = tuple(dict.fromkeys(line.strip() for line in completed.stdout.splitlines()))
+    if len(versions) != 1 or not versions[0]:
+        raise RuntimeError("nvidia-smi did not report one consistent driver version")
+    return versions[0]
+
+
+def _container_markers() -> tuple[str, ...]:
+    markers: list[str] = []
+    for path in (Path("/.dockerenv"), Path("/run/.containerenv")):
+        if path.exists():
+            markers.append(str(path))
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(encoding="utf-8").lower()
+    except OSError:
+        cgroup = ""
+    markers.extend(
+        marker
+        for marker in ("docker", "containerd", "kubepods", "lxc")
+        if marker in cgroup
+    )
+    return tuple(sorted(set(markers)))
+
+
+def gpu_health(
+    device: str,
+    *,
+    worker_root: str | Path | None = None,
+    extended: bool = False,
+) -> dict[str, object]:
     """Run a fresh-process allocation and synchronization probe."""
 
     try:
@@ -122,6 +174,18 @@ def gpu_health(device: str, *, worker_root: str | Path | None = None) -> dict[st
             "triton_version": importlib.metadata.version("triton"),
             "value": observed,
         }
+        if extended:
+            try:
+                result["tilelang_version"] = importlib.metadata.version("tilelang")
+            except importlib.metadata.PackageNotFoundError:
+                pass
+            try:
+                result["driver_version"] = _read_driver_version()
+            except (OSError, subprocess.SubprocessError):
+                pass
+            markers = _container_markers()
+            result["container_markers"] = list(markers)
+            result["non_container_worker"] = not markers
         if worker_root is not None:
             result["worker_revision"] = _read_worker_revision(worker_root)
         return result
@@ -142,6 +206,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--device")
     parser.add_argument("--worker-root")
     parser.add_argument("--health-check", action="store_true")
+    parser.add_argument("--extended-health", action="store_true")
     return parser
 
 
@@ -150,11 +215,12 @@ def main(argv: list[str] | None = None) -> int:
     if arguments.health_check:
         with contextlib.redirect_stdout(sys.stderr):
             device = arguments.device or "cuda:0"
-            result = (
-                gpu_health(device, worker_root=arguments.worker_root)
-                if arguments.worker_root is not None
-                else gpu_health(device)
-            )
+            health_options: dict[str, object] = {}
+            if arguments.worker_root is not None:
+                health_options["worker_root"] = arguments.worker_root
+            if arguments.extended_health:
+                health_options["extended"] = True
+            result = gpu_health(device, **health_options)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
         return int(result["status"] != "healthy")
     if not arguments.kernelbench_root:

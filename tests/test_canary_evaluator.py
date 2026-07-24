@@ -3,10 +3,17 @@ from __future__ import annotations
 import hashlib
 import subprocess
 import sys
+from types import SimpleNamespace
+
+import pytest
 
 from abstrak.canary.baselines import load_baseline_source
 from abstrak.canary.contracts import WorkerJob
-from abstrak.canary.evaluator import _coefficient_of_variation, evaluate_job
+from abstrak.canary.evaluator import (
+    _coefficient_of_variation,
+    _generated_code_metadata,
+    evaluate_job,
+)
 from abstrak.canary.fallback import StaticValidationIssue
 from abstrak.canary.target_adapters import TargetAdapterRegistry, TargetValidationResult
 from abstrak.canary.targets import get_target_stack
@@ -157,6 +164,59 @@ def test_unregistered_baseline_does_not_receive_static_bypass() -> None:
 def test_coefficient_of_variation_uses_raw_samples() -> None:
     assert _coefficient_of_variation((1.0, 1.0, 1.0)) == 0.0
     assert _coefficient_of_variation((1.0, 2.0)) > 0.0
+
+
+def test_capability_oracle_captures_tilelang_generated_source_hash() -> None:
+    source = "extern \"C\" __global__ void main_kernel() {}\n"
+    task = get_task_pack("gelu-static")
+    candidate = SimpleNamespace(
+        kernel=SimpleNamespace(get_kernel_source=lambda: source)
+    )
+    job = WorkerJob(
+        job_id="gelu-capability-oracle",
+        kind="oracle",
+        task=task,
+        target=get_target_stack("tilelang-a100-core"),
+        case_ids=tuple(case.id for case in task.sealed_cases),
+        candidate_source=load_oracle_source("gelu-static", "tilelang"),
+        candidate_sha256=hashlib.sha256(
+            load_oracle_source("gelu-static", "tilelang").encode()
+        ).hexdigest(),
+    )
+
+    metadata = _generated_code_metadata(candidate, job)
+
+    assert metadata == {
+        "generated_code_capture": "tilelang.get_kernel_source.v1",
+        "generated_code_sha256": hashlib.sha256(source.encode()).hexdigest(),
+        "generated_code_size_bytes": len(source.encode()),
+    }
+
+
+def test_generated_source_capture_is_scoped_and_fails_closed() -> None:
+    r1 = _job(load_oracle_source("row-reduction-scale", "triton"), kind="oracle")
+    assert _generated_code_metadata(SimpleNamespace(), r1) == {}
+
+    task = get_task_pack("gelu-static")
+    source = load_oracle_source("gelu-static", "tilelang")
+    capability = WorkerJob(
+        job_id="gelu-capability-missing-codegen",
+        kind="oracle",
+        task=task,
+        target=get_target_stack("tilelang-a100-core"),
+        case_ids=tuple(case.id for case in task.sealed_cases),
+        candidate_source=source,
+        candidate_sha256=hashlib.sha256(source.encode()).hexdigest(),
+    )
+    with pytest.raises(RuntimeError, match="get_kernel_source"):
+        _generated_code_metadata(SimpleNamespace(), capability)
+
+    dev_capability = capability.model_copy(update={"kind": "dev", "case_ids": ("dev-random",)})
+    generated = _generated_code_metadata(
+        SimpleNamespace(kernel=SimpleNamespace(get_kernel_source=lambda: "generated")),
+        dev_capability,
+    )
+    assert generated["generated_code_sha256"] == hashlib.sha256(b"generated").hexdigest()
 
 
 def test_importing_evaluator_does_not_import_torch() -> None:

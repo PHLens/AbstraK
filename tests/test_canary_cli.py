@@ -195,6 +195,8 @@ def test_ssh_worker_defaults_are_hashable_a100_execution_inputs() -> None:
             "run-trusted",
             "--ssh-host",
             "gpu.example",
+            "--ssh-port",
+            "30554",
             "--worker-root",
             "/srv/AbstraK",
         ]
@@ -204,6 +206,7 @@ def test_ssh_worker_defaults_are_hashable_a100_execution_inputs() -> None:
     record = cli._transport_record(worker)
 
     assert record["python_executable"] == "/tmp/abstrak-gpu-venv/bin/python"
+    assert record["port"] == 30554
     assert record["pythonpath"] == "/srv/AbstraK/src"
     assert record["kernelbench_root"] == "/srv/KernelBench"
     assert record["asset_root"] == "/srv/AbstraK/benchmarks/r1-a100"
@@ -247,6 +250,13 @@ def test_run_cell_rejects_unsandboxed_local_worker_before_auth(capsys, monkeypat
 
     assert exit_code == cli.EXIT_CONFIG
     assert "requires --ssh-host" in capsys.readouterr().err
+
+
+def test_worker_rejects_ssh_port_without_host(capsys) -> None:
+    exit_code = cli.main(["run-trusted", "--ssh-port", "30554"])
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "--ssh-port is only valid with --ssh-host" in capsys.readouterr().err
 
 
 def test_run_trusted_uses_target_backend_and_all_sealed_cases(

@@ -63,6 +63,9 @@ def _health(
     hardware: str = "Fake A100",
     capability: tuple[int, int] = (8, 0),
     triton_version: str = "3.7.1",
+    tilelang_version: str | None = None,
+    driver_version: str | None = None,
+    non_container_worker: bool | None = None,
     worker_revision: str | None = None,
 ) -> str:
     if status == "healthy":
@@ -80,6 +83,13 @@ def _health(
         }
         if worker_revision is not None:
             payload["worker_revision"] = worker_revision
+        if tilelang_version is not None:
+            payload["tilelang_version"] = tilelang_version
+        if driver_version is not None:
+            payload["driver_version"] = driver_version
+        if non_container_worker is not None:
+            payload["container_markers"] = [] if non_container_worker else ["docker"]
+            payload["non_container_worker"] = non_container_worker
     else:
         payload = {
             "schema_version": "canary-worker-health.v1",
@@ -356,6 +366,83 @@ def test_executor_rejects_target_version_drift() -> None:
     assert "found '3.6.0'" in str(captured.value)
 
 
+def test_executor_rejects_tilelang_version_drift() -> None:
+    job = _job()
+    popen = PopenRecorder(
+        FakeProcess(stdout=_result(job).model_dump_json()),
+        FakeProcess(stdout=_health(tilelang_version="0.1.11")),
+    )
+    executor = LocalWorkerExecutor(
+        "/worker/KernelBench",
+        popen_factory=popen,
+        expected_tilelang_version="0.1.12",
+    )
+
+    with pytest.raises(WorkerExecutionError) as captured:
+        executor.execute(job)
+
+    assert captured.value.category == "configuration"
+    assert "expected TileLang '0.1.12'" in str(captured.value)
+    assert "found '0.1.11'" in str(captured.value)
+
+
+def test_explicit_environment_probe_binds_all_preflight_versions() -> None:
+    health = FakeProcess(
+        stdout=_health(
+            tilelang_version="0.1.12",
+            driver_version="570.00",
+            non_container_worker=True,
+        )
+    )
+    popen = PopenRecorder(health)
+    executor = LocalWorkerExecutor(
+        "/worker/KernelBench",
+        popen_factory=popen,
+        expected_hardware_substring="Fake A100",
+        expected_compute_capability=(8, 0),
+        expected_python_version="3.10.20",
+        expected_torch_version="2.13.0+cu126",
+        expected_torch_cuda_version="12.6",
+        expected_triton_version="3.7.1",
+        expected_tilelang_version="0.1.12",
+        expected_driver_version="570.00",
+        expected_non_container_worker=True,
+    )
+
+    observed = executor.validate_environment("cuda:0")
+
+    assert observed["driver_version"] == "570.00"
+    assert observed["non_container_worker"] is True
+    assert len(popen.calls) == 1
+    assert popen.calls[0][0][-1] == "--extended-health"
+
+
+def test_environment_probe_rejects_container_and_malformed_driver_evidence() -> None:
+    container = LocalWorkerExecutor(
+        "/worker/KernelBench",
+        popen_factory=PopenRecorder(
+            FakeProcess(
+                stdout=_health(driver_version="570.00", non_container_worker=False)
+            )
+        ),
+        expected_driver_version="570.00",
+        expected_non_container_worker=True,
+    )
+    with pytest.raises(WorkerExecutionError, match="non_container_worker") as captured:
+        container.validate_environment("cuda:0")
+    assert captured.value.category == "configuration"
+
+    malformed = json.loads(_health())
+    malformed["driver_version"] = 570
+    executor = LocalWorkerExecutor(
+        "/worker/KernelBench",
+        popen_factory=PopenRecorder(FakeProcess(stdout=json.dumps(malformed))),
+    )
+    with pytest.raises(WorkerExecutionError) as malformed_error:
+        executor.validate_environment("cuda:0")
+    assert malformed_error.value.category == "health_check_failed"
+
+
 def test_ssh_executor_rejects_worker_revision_drift_after_each_job() -> None:
     job = _job()
     popen = PopenRecorder(
@@ -364,6 +451,7 @@ def test_ssh_executor_rejects_worker_revision_drift_after_each_job() -> None:
     )
     executor = SshWorkerExecutor(
         "gpu.example",
+        port=30554,
         python_executable="/opt/abstrak/bin/python",
         pythonpath="/srv/AbstraK/src",
         kernelbench_root="/srv/KernelBench",
@@ -632,6 +720,7 @@ def test_supervised_ssh_mode_drops_privileges_and_clears_environment() -> None:
 def test_ssh_matrix_binding_is_derived_from_actual_executor_configuration() -> None:
     executor = SshWorkerExecutor(
         "gpu.example",
+        port=30554,
         python_executable="/opt/abstrak/bin/python",
         pythonpath="/srv/AbstraK/src",
         kernelbench_root="/srv/KernelBench",
@@ -647,6 +736,7 @@ def test_ssh_matrix_binding_is_derived_from_actual_executor_configuration() -> N
     assert binding is not None
     assert binding.worker_revision == "a" * 40
     assert binding.transport.host == "gpu.example"
+    assert binding.transport.port == 30554
     assert binding.transport.worker_root == "/srv/AbstraK"
     assert binding.transport.python_executable == "/opt/abstrak/bin/python"
     assert binding.transport.device == "cuda:1"
@@ -654,6 +744,8 @@ def test_ssh_matrix_binding_is_derived_from_actual_executor_configuration() -> N
     assert binding.transport.timeout_seconds == 420.0
     assert binding.transport.network_isolated is False
     assert binding.transport.filesystem_read_only is False
+    command = executor._command(_job().model_copy(update={"device": "cuda:1"}))
+    assert command[command.index("-p") : command.index("-p") + 2] == ["-p", "30554"]
 
 
 def test_ssh_matrix_binding_requires_a_full_expected_worker_revision() -> None:
@@ -670,6 +762,13 @@ def test_ssh_matrix_binding_requires_a_full_expected_worker_revision() -> None:
             **arguments,
             expected_worker_revision="main",
         )
+    for invalid_port in (0, 65536, True):
+        with pytest.raises(ValueError, match="port must be"):
+            SshWorkerExecutor(
+                "gpu.example",
+                **arguments,
+                port=invalid_port,
+            )
 
 
 def test_ssh_executor_rejects_paths_hidden_by_sandbox() -> None:

@@ -219,6 +219,7 @@ class MatrixTransportContext(CanaryModel):
     )
     kind: Literal["ssh"] = "ssh"
     host: str = Field(min_length=1)
+    port: int | None = Field(default=None, ge=1, le=65535)
     worker_root: str = Field(min_length=1)
     python_executable: str = Field(min_length=1)
     pythonpath: str = Field(min_length=1)

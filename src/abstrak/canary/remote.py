@@ -185,6 +185,24 @@ def _parse_health(stdout: str, expected_device: str) -> dict[str, object]:
         ):
             if not isinstance(value.get(field), str) or not value[field]:
                 raise ValueError(f"healthy result requires {field}")
+        for field in ("tilelang_version", "driver_version"):
+            if field in value and (
+                not isinstance(value[field], str) or not value[field]
+            ):
+                raise ValueError(f"health {field} must be a non-empty string")
+        markers = value.get("container_markers")
+        if markers is not None and (
+            not isinstance(markers, list)
+            or any(not isinstance(marker, str) or not marker for marker in markers)
+            or len(markers) != len(set(markers))
+        ):
+            raise ValueError("health container_markers must be unique non-empty strings")
+        non_container = value.get("non_container_worker")
+        if non_container is not None and not isinstance(non_container, bool):
+            raise ValueError("health non_container_worker must be a boolean")
+        if markers is not None and non_container is not None:
+            if non_container != (not markers):
+                raise ValueError("health container markers disagree with non_container_worker")
         worker_revision = value.get("worker_revision")
         if worker_revision is not None and (
             not isinstance(worker_revision, str)
@@ -218,7 +236,13 @@ class _SubprocessExecutor:
         preserve_ssh_auth_sock: bool,
         expected_hardware_substring: str | None,
         expected_compute_capability: tuple[int, int] | None,
+        expected_python_version: str | None,
+        expected_torch_version: str | None,
+        expected_torch_cuda_version: str | None,
         expected_triton_version: str | None,
+        expected_tilelang_version: str | None,
+        expected_driver_version: str | None,
+        expected_non_container_worker: bool | None,
     ) -> None:
         if timeout_seconds <= 0 or health_timeout_seconds <= 0:
             raise ValueError("worker and health timeouts must be positive")
@@ -233,10 +257,27 @@ class _SubprocessExecutor:
         )
         self.expected_hardware_substring = expected_hardware_substring
         self.expected_compute_capability = expected_compute_capability
+        self.expected_python_version = expected_python_version
+        self.expected_torch_version = expected_torch_version
+        self.expected_torch_cuda_version = expected_torch_cuda_version
         self.expected_triton_version = expected_triton_version
+        self.expected_tilelang_version = expected_tilelang_version
+        self.expected_driver_version = expected_driver_version
+        self.expected_non_container_worker = expected_non_container_worker
         self._quarantined = False
         self._quarantine_error: WorkerExecutionError | None = None
         self.last_health: dict[str, object] | None = None
+
+    @property
+    def _extended_health_required(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.expected_tilelang_version,
+                self.expected_driver_version,
+                self.expected_non_container_worker,
+            )
+        )
 
     @property
     def quarantined(self) -> bool:
@@ -245,7 +286,7 @@ class _SubprocessExecutor:
     def _command(self, job: WorkerJob) -> Sequence[str]:
         raise NotImplementedError
 
-    def _health_command(self, job: WorkerJob) -> Sequence[str]:
+    def _health_command(self, device: str) -> Sequence[str]:
         raise NotImplementedError
 
     def _communicate(
@@ -294,25 +335,25 @@ class _SubprocessExecutor:
             stderr=stderr,
         )
 
-    def _check_health(self, job: WorkerJob) -> dict[str, object]:
+    def _check_health(self, device: str) -> dict[str, object]:
         try:
             output = self._communicate(
-                self._health_command(job),
+                self._health_command(device),
                 payload=None,
                 timeout_seconds=self.health_timeout_seconds,
                 spawn_category="health_check_failed",
                 timeout_category="health_check_failed",
             )
-            health = _parse_health(output.stdout, job.device)
+            health = _parse_health(output.stdout, device)
         except (ValueError, WorkerExecutionError) as error:
-            health = _failed_health(job.device, f"{type(error).__name__}: {error}")
+            health = _failed_health(device, f"{type(error).__name__}: {error}")
             raise WorkerExecutionError(
                 "health_check_failed",
                 health["error"],
                 health=health,
             ) from error
         if output.returncode is None:
-            health = _failed_health(job.device, "health worker did not report an exit status")
+            health = _failed_health(device, "health worker did not report an exit status")
             raise WorkerExecutionError(
                 "health_check_failed",
                 health["error"],
@@ -320,7 +361,7 @@ class _SubprocessExecutor:
             )
         if health["status"] == "healthy" and output.returncode != 0:
             health = _failed_health(
-                job.device,
+                device,
                 f"healthy worker exited with status {output.returncode}: "
                 f"{_diagnostic(output.stderr)}",
             )
@@ -337,7 +378,7 @@ class _SubprocessExecutor:
         self._quarantine_error = error
         self.last_health = None if error.health is None else dict(error.health)
 
-    def _require_compatible_hardware(self, health: dict[str, object]) -> None:
+    def _require_compatible_environment(self, health: dict[str, object]) -> None:
         if health["status"] != "healthy":
             return
         errors: list[str] = []
@@ -359,13 +400,24 @@ class _SubprocessExecutor:
                 f"expected compute capability {self.expected_compute_capability}, "
                 f"found {capability}"
             )
-        if (
-            self.expected_triton_version is not None
-            and health["triton_version"] != self.expected_triton_version
+        for label, key, expected in (
+            ("Python", "python_version", self.expected_python_version),
+            ("Torch", "torch_version", self.expected_torch_version),
+            ("Torch CUDA", "torch_cuda_version", self.expected_torch_cuda_version),
+            ("Triton", "triton_version", self.expected_triton_version),
+            ("TileLang", "tilelang_version", self.expected_tilelang_version),
+            ("NVIDIA driver", "driver_version", self.expected_driver_version),
+        ):
+            if expected is not None and health.get(key) != expected:
+                errors.append(
+                    f"expected {label} {expected!r}, found {health.get(key)!r}"
+                )
+        if self.expected_non_container_worker is not None and (
+            health.get("non_container_worker") != self.expected_non_container_worker
         ):
             errors.append(
-                f"expected Triton {self.expected_triton_version!r}, "
-                f"found {health['triton_version']!r}"
+                f"expected non_container_worker {self.expected_non_container_worker!r}, "
+                f"found {health.get('non_container_worker')!r}"
             )
         expected_worker_revision = getattr(self, "expected_worker_revision", None)
         if (
@@ -383,6 +435,30 @@ class _SubprocessExecutor:
                 str(health["compatibility_error"]),
                 health=health,
             )
+
+    def validate_environment(self, device: str) -> dict[str, object]:
+        """Probe and bind the worker environment before generated-code execution."""
+
+        if self._quarantined:
+            raise WorkerExecutionError(
+                "quarantined",
+                "worker executor is quarantined after an earlier failure",
+                health=self.last_health,
+            ) from self._quarantine_error
+        try:
+            health = self._check_health(device)
+            if health["status"] != "healthy":
+                raise WorkerExecutionError(
+                    "health_unhealthy",
+                    str(health.get("error", "GPU health probe failed")),
+                    health=health,
+                )
+            self._require_compatible_environment(health)
+        except WorkerExecutionError as error:
+            self._quarantine(error)
+            raise
+        self.last_health = health
+        return dict(health)
 
     def execute(self, job: WorkerJob) -> WorkerResult:
         if self._quarantined:
@@ -426,7 +502,7 @@ class _SubprocessExecutor:
             primary_error = error
 
         try:
-            health = self._check_health(job)
+            health = self._check_health(job.device)
         except WorkerExecutionError as health_error:
             if primary_error is not None:
                 primary_error.with_health(health_error.health or {})
@@ -437,7 +513,7 @@ class _SubprocessExecutor:
 
         self.last_health = health
         try:
-            self._require_compatible_hardware(health)
+            self._require_compatible_environment(health)
         except WorkerExecutionError as error:
             self._quarantine(error)
             raise
@@ -501,7 +577,13 @@ class LocalWorkerExecutor(_SubprocessExecutor):
         environment: Mapping[str, str] | None = None,
         expected_hardware_substring: str | None = None,
         expected_compute_capability: tuple[int, int] | None = None,
+        expected_python_version: str | None = None,
+        expected_torch_version: str | None = None,
+        expected_torch_cuda_version: str | None = None,
         expected_triton_version: str | None = None,
+        expected_tilelang_version: str | None = None,
+        expected_driver_version: str | None = None,
+        expected_non_container_worker: bool | None = None,
     ) -> None:
         super().__init__(
             timeout_seconds=timeout_seconds,
@@ -512,7 +594,13 @@ class LocalWorkerExecutor(_SubprocessExecutor):
             preserve_ssh_auth_sock=False,
             expected_hardware_substring=expected_hardware_substring,
             expected_compute_capability=expected_compute_capability,
+            expected_python_version=expected_python_version,
+            expected_torch_version=expected_torch_version,
+            expected_torch_cuda_version=expected_torch_cuda_version,
             expected_triton_version=expected_triton_version,
+            expected_tilelang_version=expected_tilelang_version,
+            expected_driver_version=expected_driver_version,
+            expected_non_container_worker=expected_non_container_worker,
         )
         self.kernelbench_root = str(kernelbench_root)
         self.asset_root = None if asset_root is None else str(asset_root)
@@ -533,15 +621,18 @@ class LocalWorkerExecutor(_SubprocessExecutor):
         command.extend(("--device", job.device))
         return command
 
-    def _health_command(self, job: WorkerJob) -> Sequence[str]:
-        return [
+    def _health_command(self, device: str) -> Sequence[str]:
+        command = [
             self.python_executable,
             "-m",
             WORKER_MODULE,
             "--health-check",
             "--device",
-            job.device,
+            device,
         ]
+        if self._extended_health_required:
+            command.append("--extended-health")
+        return command
 
 
 class SshWorkerExecutor(_SubprocessExecutor):
@@ -551,6 +642,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
         self,
         host: str,
         *,
+        port: int | None = None,
         python_executable: str,
         pythonpath: str,
         kernelbench_root: str,
@@ -570,7 +662,13 @@ class SshWorkerExecutor(_SubprocessExecutor):
         environment: Mapping[str, str] | None = None,
         expected_hardware_substring: str | None = None,
         expected_compute_capability: tuple[int, int] | None = None,
+        expected_python_version: str | None = None,
+        expected_torch_version: str | None = None,
+        expected_torch_cuda_version: str | None = None,
         expected_triton_version: str | None = None,
+        expected_tilelang_version: str | None = None,
+        expected_driver_version: str | None = None,
+        expected_non_container_worker: bool | None = None,
         expected_worker_revision: str | None = None,
     ) -> None:
         super().__init__(
@@ -582,10 +680,20 @@ class SshWorkerExecutor(_SubprocessExecutor):
             preserve_ssh_auth_sock=True,
             expected_hardware_substring=expected_hardware_substring,
             expected_compute_capability=expected_compute_capability,
+            expected_python_version=expected_python_version,
+            expected_torch_version=expected_torch_version,
+            expected_torch_cuda_version=expected_torch_cuda_version,
             expected_triton_version=expected_triton_version,
+            expected_tilelang_version=expected_tilelang_version,
+            expected_driver_version=expected_driver_version,
+            expected_non_container_worker=expected_non_container_worker,
         )
         if not host or host.startswith("-") or any(character.isspace() for character in host):
             raise ValueError("host must be one non-option SSH destination")
+        if port is not None and (
+            isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
+        ):
+            raise ValueError("port must be an integer from 1 through 65535")
         for name, value in {
             "python_executable": python_executable,
             "pythonpath": pythonpath,
@@ -626,6 +734,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
             ):
                 raise ValueError(f"{name} cannot be under a sandbox-hidden directory")
         self.host = host
+        self.port = port
         self.python_executable = python_executable
         self.pythonpath = pythonpath
         self.kernelbench_root = kernelbench_root
@@ -651,6 +760,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
         isolated = self.sandbox_mode == "bubblewrap"
         transport = MatrixTransportContext(
             host=self.host,
+            port=self.port,
             worker_root=str(PurePosixPath(self.pythonpath).parent),
             python_executable=self.python_executable,
             pythonpath=self.pythonpath,
@@ -813,7 +923,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
             f"{remote_timeout:g}s",
             *worker_command,
         ]
-        return [
+        command = [
             self.ssh_executable,
             "-T",
             "-o",
@@ -824,19 +934,21 @@ class SshWorkerExecutor(_SubprocessExecutor):
             "ForwardAgent=no",
             "-o",
             "ForwardX11=no",
-            self.host,
-            shlex.join(remote_arguments),
         ]
+        if self.port is not None:
+            command.extend(("-p", str(self.port)))
+        command.extend((self.host, shlex.join(remote_arguments)))
+        return command
 
-    def _require_device(self, job: WorkerJob) -> None:
-        if job.device != self.device:
+    def _require_device(self, device: str) -> None:
+        if device != self.device:
             raise WorkerExecutionError(
                 "configuration",
-                f"job device {job.device!r} does not match SSH worker device {self.device!r}",
+                f"job device {device!r} does not match SSH worker device {self.device!r}",
             )
 
     def _command(self, job: WorkerJob) -> Sequence[str]:
-        self._require_device(job)
+        self._require_device(job.device)
         return self._remote_command(
             [
                 "--job",
@@ -852,8 +964,8 @@ class SshWorkerExecutor(_SubprocessExecutor):
             sandbox=True,
         )
 
-    def _health_command(self, job: WorkerJob) -> Sequence[str]:
-        self._require_device(job)
+    def _health_command(self, device: str) -> Sequence[str]:
+        self._require_device(device)
         arguments = [
             "--health-check",
             "--device",
@@ -863,6 +975,8 @@ class SshWorkerExecutor(_SubprocessExecutor):
             arguments.extend(
                 ("--worker-root", str(PurePosixPath(self.pythonpath).parent))
             )
+        if self._extended_health_required:
+            arguments.append("--extended-health")
         return self._remote_command(
             arguments,
             controller_timeout_seconds=self.health_timeout_seconds,

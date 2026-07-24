@@ -152,6 +152,7 @@ def _add_registry_options(parser: argparse.ArgumentParser) -> None:
 
 def _add_worker_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ssh-host", help="non-interactive SSH destination for the GPU worker")
+    parser.add_argument("--ssh-port", type=int, help="SSH port (default: OpenSSH configuration)")
     parser.add_argument(
         "--worker-root",
         help="AbstraK checkout on the worker; required for SSH and inferred locally",
@@ -292,6 +293,7 @@ def _worker_executor(arguments: argparse.Namespace) -> LocalWorkerExecutor | Ssh
         asset_root = arguments.worker_asset_root or str(root / "benchmarks" / "r1-a100")
         return SshWorkerExecutor(
             arguments.ssh_host,
+            port=arguments.ssh_port,
             python_executable=python_executable,
             pythonpath=pythonpath,
             kernelbench_root=kernelbench_root,
@@ -301,11 +303,16 @@ def _worker_executor(arguments: argparse.Namespace) -> LocalWorkerExecutor | Ssh
             expected_hardware_substring="A100",
             expected_compute_capability=(8, 0),
             expected_triton_version=target.version if target.backend == "triton" else None,
+            expected_tilelang_version=(
+                target.version if target.adapter.startswith("tilelang-capability-") else None
+            ),
             sandbox_mode=("setpriv" if arguments.allow_supervised_worker else "bubblewrap"),
         )
 
     if arguments.worker_pythonpath is not None:
         raise CanaryCliError("--worker-pythonpath is only valid with --ssh-host")
+    if arguments.ssh_port is not None:
+        raise CanaryCliError("--ssh-port is only valid with --ssh-host")
     if arguments.allow_supervised_worker:
         raise CanaryCliError("--allow-supervised-worker is only valid with --ssh-host")
     if arguments.command == "run-cell":
@@ -329,6 +336,9 @@ def _worker_executor(arguments: argparse.Namespace) -> LocalWorkerExecutor | Ssh
         expected_hardware_substring="A100",
         expected_compute_capability=(8, 0),
         expected_triton_version=target.version if target.backend == "triton" else None,
+        expected_tilelang_version=(
+            target.version if target.adapter.startswith("tilelang-capability-") else None
+        ),
     )
 
 
@@ -337,7 +347,7 @@ def _transport_record(
 ) -> dict[str, object]:
     if isinstance(worker, SshWorkerExecutor):
         supervised = worker.sandbox_mode == "setpriv"
-        return {
+        record: dict[str, object] = {
             "kind": "ssh",
             "host": worker.host,
             "ssh_executable": worker.ssh_executable,
@@ -358,7 +368,13 @@ def _transport_record(
             "expected_compute_capability": worker.expected_compute_capability,
             "expected_triton_version": worker.expected_triton_version,
         }
-    return {
+        if worker.port is not None:
+            record["port"] = worker.port
+        tilelang_version = getattr(worker, "expected_tilelang_version", None)
+        if tilelang_version is not None:
+            record["expected_tilelang_version"] = tilelang_version
+        return record
+    record = {
         "kind": "local",
         "python_executable": worker.python_executable,
         "kernelbench_root": worker.kernelbench_root,
@@ -368,6 +384,10 @@ def _transport_record(
         "expected_compute_capability": worker.expected_compute_capability,
         "expected_triton_version": worker.expected_triton_version,
     }
+    tilelang_version = getattr(worker, "expected_tilelang_version", None)
+    if tilelang_version is not None:
+        record["expected_tilelang_version"] = tilelang_version
+    return record
 
 
 def _validate(arguments: argparse.Namespace) -> int:

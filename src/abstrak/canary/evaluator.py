@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib
 import math
+import os
 import platform
 import statistics
 import sys
@@ -36,6 +38,26 @@ class EvaluationRuntime:
 
 
 RuntimeLoader = Callable[[str | Path], EvaluationRuntime]
+
+
+def _generated_code_metadata(candidate_model: Any, job: WorkerJob) -> dict[str, Any]:
+    """Capture final TileLang source for every non-baseline capability job."""
+
+    if job.kind == "baseline" or not job.target.adapter.startswith("tilelang-capability-"):
+        return {}
+    kernel = getattr(candidate_model, "kernel", None)
+    get_kernel_source = getattr(kernel, "get_kernel_source", None)
+    if not callable(get_kernel_source):
+        raise RuntimeError("capability candidate does not expose TileLang get_kernel_source()")
+    source = get_kernel_source()
+    if not isinstance(source, str) or not source:
+        raise RuntimeError("TileLang generated kernel source is empty")
+    encoded = source.encode("utf-8")
+    return {
+        "generated_code_capture": "tilelang.get_kernel_source.v1",
+        "generated_code_sha256": hashlib.sha256(encoded).hexdigest(),
+        "generated_code_size_bytes": len(encoded),
+    }
 
 
 def _load_runtime(kernelbench_root: str | Path) -> EvaluationRuntime:
@@ -85,7 +107,12 @@ def _result(
     return result.verify_for_job(job)
 
 
-def _runtime_metadata(runtime: EvaluationRuntime, device: str) -> dict[str, Any]:
+def _runtime_metadata(
+    runtime: EvaluationRuntime,
+    device: str,
+    *,
+    include_isolation: bool = False,
+) -> dict[str, Any]:
     torch = runtime.torch
     metadata: dict[str, Any] = {
         "python_version": platform.python_version(),
@@ -93,6 +120,22 @@ def _runtime_metadata(runtime: EvaluationRuntime, device: str) -> dict[str, Any]
         "torch_cuda_version": str(getattr(torch.version, "cuda", None)),
         "device": device,
     }
+    if include_isolation:
+        workspace = Path.cwd().resolve()
+        cache_names = ("TORCH_EXTENSIONS_DIR", "TRITON_CACHE_DIR", "XDG_CACHE_HOME")
+        cache_roots = {
+            name: str(Path(os.environ.get(name, "")).resolve())
+            for name in cache_names
+            if os.environ.get(name)
+        }
+        metadata.update(
+            {
+                "worker_workspace": str(workspace),
+                "worker_cache_roots": cache_roots,
+                "per_job_cache_isolated": len(cache_roots) == len(cache_names)
+                and all(Path(path).is_relative_to(workspace) for path in cache_roots.values()),
+            }
+        )
     try:
         metadata["hardware"] = str(torch.cuda.get_device_name(torch.device(device)))
     except Exception as error:
@@ -288,7 +331,13 @@ def evaluate_job(
         )
     torch = runtime.torch
     metadata = dict(validation_metadata)
-    metadata.update(_runtime_metadata(runtime, selected_device))
+    metadata.update(
+        _runtime_metadata(
+            runtime,
+            selected_device,
+            include_isolation=job.target.adapter.startswith("tilelang-capability-"),
+        )
+    )
     if not torch.cuda.is_available():
         return _result(
             job,
@@ -324,6 +373,7 @@ def evaluate_job(
             candidate_model = candidate_class(*job.task.init_args).to(device=torch_device)
             reference_model.eval()
             candidate_model.eval()
+            metadata.update(_generated_code_metadata(candidate_model, job))
             torch.cuda.synchronize(device=torch_device)
     except Exception as error:
         if candidate_file is not None:
