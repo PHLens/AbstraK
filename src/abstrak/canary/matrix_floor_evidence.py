@@ -26,10 +26,10 @@ from abstrak.canary.matrix_preflight import (
     TaskFloorRecord,
     VerifiedTaskFloorEvidence,
 )
+from abstrak.canary.timing import timing_failure_status
 from abstrak.providers.contracts import sha256_json
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_INFRASTRUCTURE_FAILURES = {"environment_error", "timeout", "worker_error"}
 _METRIC_REL_TOL = 1e-12
 _METRIC_ABS_TOL = 1e-12
 
@@ -313,11 +313,7 @@ def _validate_failed_attempt(record: GateRecord, attempt_index: int) -> None:
                 f"failed timing attempt has no terminal failed result: "
                 f"{record.task_id}/{record.target_id}"
             )
-        expected_status = (
-            "worker_failure"
-            if terminal_result.status in _INFRASTRUCTURE_FAILURES
-            else "correctness_failure"
-        )
+        expected_status = timing_failure_status(terminal_result)
     if attempt.status != expected_status or attempt.stable or attempt.error is None:
         raise MatrixFloorEvidenceError(
             f"failed timing status differs from its terminal result: "

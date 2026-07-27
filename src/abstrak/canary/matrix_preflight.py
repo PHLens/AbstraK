@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
+import shutil
 from pathlib import Path
 from typing import Literal
 
@@ -1381,7 +1383,7 @@ def seal_preflight_bundle(
     execution_context: MatrixExecutionContext,
     trajectory_id: str = "matrix-preflight",
 ) -> Path:
-    """Write and seal one ready preflight bundle with no untyped side files."""
+    """Atomically seal or exactly resume one ready preflight bundle."""
 
     receipt = build_preflight_receipt(
         pinned,
@@ -1391,17 +1393,82 @@ def seal_preflight_bundle(
         environment=environment,
         execution_context=execution_context,
     )
+    final = Path(root).expanduser() / pinned.spec.study_id / trajectory_id
+    staging = final.with_name(f"{trajectory_id}.incomplete")
+
+    def require_expected(directory: Path) -> None:
+        bundle = load_preflight_bundle(
+            directory,
+            pinned,
+            schedule,
+            execution_context=execution_context,
+        )
+        if (
+            bundle.assets != assets
+            or bundle.floor != floor
+            or bundle.environment != environment
+            or bundle.receipt != receipt
+        ):
+            raise MatrixPreflightError(
+                "sealed preflight bundle differs from supplied ready evidence"
+            )
+
+    if (final.exists() or final.is_symlink()) and (
+        staging.exists() or staging.is_symlink()
+    ):
+        raise MatrixPreflightError(
+            "final and staging preflight bundles both exist"
+        )
+    if final.exists() or final.is_symlink():
+        require_expected(final)
+        return final
+    if staging.exists() or staging.is_symlink():
+        if staging.is_symlink():
+            raise MatrixPreflightError(
+                "preflight staging bundle cannot be a symbolic link"
+            )
+        if not staging.is_dir():
+            raise MatrixPreflightError(
+                "preflight staging bundle is not a regular directory"
+            )
+        try:
+            require_expected(staging)
+        except MatrixPreflightError:
+            checksum = staging / "sha256sums.txt"
+            if not checksum.exists() and not checksum.is_symlink():
+                shutil.rmtree(staging)
+            else:
+                raise
+        else:
+            if final.exists() or final.is_symlink():
+                raise MatrixPreflightError(
+                    "preflight bundle appeared during staging resume"
+                )
+            os.replace(staging, final)
+            return final
     try:
-        store = TrajectoryStore.create(root, pinned.spec.study_id, trajectory_id)
+        store = TrajectoryStore.create(
+            root,
+            pinned.spec.study_id,
+            f"{trajectory_id}.incomplete",
+        )
         store.write_json("asset-manifest.json", assets)
         store.write_json("environment-manifest.json", environment)
         store.write_json("floor-manifest.json", floor)
         store.write_json("execution-context.json", execution_context)
         store.write_json("preflight-receipt.json", receipt)
         store.seal()
+        if final.exists() or final.is_symlink():
+            raise MatrixPreflightError(
+                "preflight bundle appeared during atomic staging"
+            )
+        os.replace(store.run_directory, final)
+    except MatrixPreflightError:
+        raise
     except (OSError, TrajectoryArtifactError) as error:
         raise MatrixPreflightError("cannot write sealed matrix preflight bundle") from error
-    return store.run_directory
+    require_expected(final)
+    return final
 
 
 def _validate_artifact_shape(directory: Path) -> None:

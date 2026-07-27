@@ -17,15 +17,29 @@ from pydantic import BaseModel, ValidationError
 
 from abstrak.canary.artifacts import TrajectoryArtifactError, TrajectoryStore
 from abstrak.canary.baselines import BaselineRegistryError
+from abstrak.canary.capability_assets import build_capability_asset_manifest
 from abstrak.canary.contracts import AgentBudget, TimingSpec, WorkerJob
 from abstrak.canary.gates import GateError, run_baseline_gates, run_oracle_gates
 from abstrak.canary.loop import CanaryAgentLoop
 from abstrak.canary.manifests import PinnedStudySpec, StudyManifestError, load_study_spec
 from abstrak.canary.matrix import MatrixSchedule, MatrixSpecError, build_matrix_schedule
-from abstrak.canary.matrix_preflight import MatrixPreflightError, load_preflight_bundle
+from abstrak.canary.matrix_preflight import (
+    MatrixPreflightError,
+    build_pending_environment,
+    load_preflight_bundle,
+)
+from abstrak.canary.matrix_preflight_runner import (
+    MatrixPreflightArtifactError,
+    MatrixPreflightInfrastructureError,
+    MatrixPreflightInvalidFloorError,
+    MatrixPreflightRunnerError,
+    preflight_worker_job_ceiling,
+    run_matrix_preflight,
+)
 from abstrak.canary.matrix_runner import (
     MatrixPhaseRunSummary,
     MatrixStudyRunError,
+    MatrixTransportContext,
     load_matrix_phase_contract,
     run_matrix_phase,
     validate_matrix_phase_guards,
@@ -210,6 +224,45 @@ def _parser() -> argparse.ArgumentParser:
     )
     inspect_study.add_argument("--study-spec", required=True)
     inspect_study.add_argument("--expected-study-sha256")
+
+    preflight_study = subparsers.add_parser(
+        "preflight-study",
+        help="run or resume the trusted environment, floor, canary, and launch gates",
+    )
+    preflight_study.add_argument("--study-spec", required=True)
+    preflight_study.add_argument("--expected-study-sha256", required=True)
+    preflight_study.add_argument(
+        "--asset-root",
+        help="local frozen assets (default: directory containing --study-spec)",
+    )
+    preflight_study.add_argument(
+        "--artifact-root",
+        default="artifacts/capability-gate-a100",
+    )
+    preflight_study.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge execution of trusted GPU code under the frozen timing protocol",
+    )
+    preflight_study.add_argument(
+        "--expected-max-jobs",
+        type=int,
+        required=True,
+        help=(
+            "must equal the dynamically derived preflight ceiling for each "
+            "authorized invocation"
+        ),
+    )
+    _add_worker_options(preflight_study)
+    preflight_study.add_argument("--expected-accelerator", required=True)
+    preflight_study.add_argument("--expected-compute-capability", required=True)
+    preflight_study.add_argument("--expected-python-version", required=True)
+    preflight_study.add_argument("--expected-tilelang-version", required=True)
+    preflight_study.add_argument("--expected-triton-version", required=True)
+    preflight_study.add_argument("--expected-torch-version", required=True)
+    preflight_study.add_argument("--expected-cuda-version", required=True)
+    preflight_study.add_argument("--expected-driver-version", required=True)
+    preflight_study.add_argument("--expected-kernelbench-revision", required=True)
 
     run_study = subparsers.add_parser(
         "run-study",
@@ -521,6 +574,152 @@ def _inspect_study(arguments: argparse.Namespace) -> int:
                 }
                 for phase in pinned.spec.phases
             ],
+        }
+    )
+    return EXIT_OK
+
+
+def _preflight_transport(
+    arguments: argparse.Namespace,
+) -> MatrixTransportContext:
+    if not arguments.ssh_host:
+        raise CanaryCliError("preflight-study requires --ssh-host")
+    if not arguments.worker_root:
+        raise CanaryCliError("preflight-study requires --worker-root")
+    if arguments.worker_timeout <= 0:
+        raise CanaryCliError("--worker-timeout must be positive")
+    worker_root = PurePosixPath(arguments.worker_root)
+    if not worker_root.is_absolute():
+        raise CanaryCliError("--worker-root must be an absolute remote path")
+    python_executable = arguments.worker_python or "/tmp/abstrak-gpu-venv/bin/python"
+    pythonpath = arguments.worker_pythonpath or str(worker_root / "src")
+    if not PurePosixPath(python_executable).is_absolute():
+        raise CanaryCliError("--worker-python must be an absolute remote path")
+    pythonpath_value = PurePosixPath(pythonpath)
+    if (
+        not pythonpath_value.is_absolute()
+        or pythonpath_value.parent != worker_root
+    ):
+        raise CanaryCliError(
+            "--worker-pythonpath must be the worker checkout's direct src path"
+        )
+    kernelbench_root = arguments.worker_kernelbench_root or str(
+        worker_root.parent / "KernelBench"
+    )
+    worker_asset_root = arguments.worker_asset_root or str(
+        worker_root / "benchmarks" / "capability-gate-a100"
+    )
+    if not PurePosixPath(kernelbench_root).is_absolute():
+        raise CanaryCliError(
+            "--worker-kernelbench-root must be an absolute remote path"
+        )
+    if not PurePosixPath(worker_asset_root).is_absolute():
+        raise CanaryCliError(
+            "--worker-asset-root must be an absolute remote path"
+        )
+    supervised = arguments.allow_supervised_worker
+    return MatrixTransportContext(
+        host=arguments.ssh_host,
+        port=arguments.ssh_port,
+        worker_root=str(worker_root),
+        python_executable=python_executable,
+        pythonpath=str(pythonpath_value),
+        kernelbench_root=kernelbench_root,
+        asset_root=worker_asset_root,
+        sandbox="setpriv-supervised" if supervised else "bubblewrap",
+        device=arguments.device,
+        timeout_seconds=arguments.worker_timeout,
+        network_isolated=not supervised,
+        filesystem_read_only=not supervised,
+    )
+
+
+def _run_preflight_study(arguments: argparse.Namespace) -> int:
+    if arguments.live is not True:
+        raise CanaryCliError(
+            "preflight-study requires --live because it executes trusted GPU code"
+        )
+    pinned = load_study_spec(
+        arguments.study_spec,
+        expected_sha256=arguments.expected_study_sha256,
+    )
+    schedule = build_matrix_schedule(pinned.spec)
+    asset_root = (
+        Path(arguments.asset_root).expanduser().resolve()
+        if arguments.asset_root is not None
+        else pinned.path.parent.resolve()
+    )
+    assets = build_capability_asset_manifest(
+        pinned,
+        schedule,
+        asset_root=asset_root,
+    )
+    baseline_target_id = assets.targets[0].target_id
+    frozen_ceiling = preflight_worker_job_ceiling(
+        assets,
+        baseline_target_id=baseline_target_id,
+    )
+    if arguments.expected_max_jobs != frozen_ceiling:
+        raise CanaryCliError(
+            "--expected-max-jobs must equal the frozen preflight ceiling "
+            f"({frozen_ceiling})"
+        )
+    controller_revision = read_clean_controller_revision(REPOSITORY_ROOT)
+    pending_environment = build_pending_environment(
+        pinned,
+        schedule,
+        controller_revision=controller_revision,
+        worker_revision=controller_revision,
+        transport=_preflight_transport(arguments),
+        accelerator=arguments.expected_accelerator,
+        compute_capability=arguments.expected_compute_capability,
+        python_version=arguments.expected_python_version,
+        tilelang_version=arguments.expected_tilelang_version,
+        triton_version=arguments.expected_triton_version,
+        torch_version=arguments.expected_torch_version,
+        cuda_version=arguments.expected_cuda_version,
+        driver_version=arguments.expected_driver_version,
+        kernelbench_revision=arguments.expected_kernelbench_revision,
+    )
+    result = run_matrix_preflight(
+        pinned,
+        schedule,
+        assets,
+        pending_environment,
+        artifact_root=arguments.artifact_root,
+        asset_root=asset_root,
+        baseline_target_id=baseline_target_id,
+        live=arguments.live,
+        expected_max_worker_jobs_per_invocation=arguments.expected_max_jobs,
+    )
+    protocol_counts = {
+        kind: sum(
+            item.kind == kind for item in result.contract.protocols
+        )
+        for kind in ("oracle", "baseline", "capability", "launch")
+    }
+    _emit(
+        {
+            "status": "ready",
+            "resumed_ready_bundle": result.resumed_ready_bundle,
+            "study_id": pinned.spec.study_id,
+            "study_spec_sha256": pinned.sha256,
+            "schedule_sha256": schedule.sha256,
+            "asset_manifest_sha256": result.bundle.assets.sha256,
+            "environment_manifest_sha256": result.bundle.environment.sha256,
+            "floor_manifest_sha256": result.bundle.floor.sha256,
+            "execution_context_sha256": result.bundle.execution_context.sha256,
+            "preflight_receipt_sha256": result.bundle.receipt.sha256,
+            "preflight_bundle_sha256": result.bundle.sha256,
+            "preflight_contract_sha256": result.contract.sha256,
+            "environment_probe_artifact_sha256": (
+                result.environment_probe.sha256
+            ),
+            "protocol_counts": protocol_counts,
+            "max_worker_jobs_per_invocation": (
+                result.contract.max_worker_jobs_per_invocation
+            ),
+            "preflight_directory": str(result.preflight_directory),
         }
     )
     return EXIT_OK
@@ -1049,6 +1248,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(arguments)
         if arguments.command == "inspect-study":
             return _inspect_study(arguments)
+        if arguments.command == "preflight-study":
+            return _run_preflight_study(arguments)
         if arguments.command == "run-study":
             return _run_study(arguments)
         if arguments.command == "time-study":
@@ -1060,6 +1261,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if arguments.command == "analyze-study":
             return _run_analysis(arguments)
         return _run_cell(arguments)
+    except MatrixPreflightInfrastructureError as error:
+        print(f"preflight infrastructure error: {error}", file=sys.stderr)
+        return EXIT_WORKER
+    except MatrixPreflightArtifactError as error:
+        print(f"preflight artifact error: {error}", file=sys.stderr)
+        return EXIT_ARTIFACT
+    except MatrixPreflightInvalidFloorError as error:
+        print(f"preflight invalid floor: {error}", file=sys.stderr)
+        return EXIT_ARTIFACT
     except (
         CanaryCliError,
         ConfigurationError,
@@ -1072,6 +1282,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         AnalysisReportError,
         MatrixPreflightError,
         MatrixRuntimeError,
+        MatrixPreflightRunnerError,
         MatrixSpecError,
         StudyManifestError,
         ValidationError,

@@ -58,7 +58,11 @@ from abstrak.canary.tasks import (
     CAPABILITY_GATE_ASSET_ROOT,
     get_task_pack,
 )
-from abstrak.canary.timing import TimingProtocolSummary, run_timing_protocol
+from abstrak.canary.timing import (
+    TimingProtocolSummary,
+    is_proven_job_scoped_resource_failure,
+    run_timing_protocol,
+)
 from abstrak.providers.contracts import sha256_json
 
 _SHA256 = re.compile(SHA256_PATTERN)
@@ -524,11 +528,20 @@ def _remove_unsealed_staging(directory: Path) -> bool:
         return False
     if directory.is_symlink():
         raise MatrixCapabilityEvidenceError("capability staging artifact cannot be a symbolic link")
-    try:
-        verify_trajectory(directory)
-    except (OSError, TrajectoryArtifactError):
+    if not directory.is_dir():
+        raise MatrixCapabilityEvidenceError(
+            "capability staging artifact is not a regular directory"
+        )
+    checksum = directory / "sha256sums.txt"
+    if not checksum.exists() and not checksum.is_symlink():
         shutil.rmtree(directory)
         return True
+    try:
+        verify_trajectory(directory)
+    except (OSError, TrajectoryArtifactError) as error:
+        raise MatrixCapabilityEvidenceError(
+            "checksum-bearing capability staging artifact is invalid"
+        ) from error
     return False
 
 
@@ -750,7 +763,8 @@ def _inspect_record(
                     f"capability worker job differs from frozen input: {job.job_id}"
                 )
     for result in record.summary.results:
-        _validate_static_result(result, identity.static)
+        if not is_proven_job_scoped_resource_failure(result):
+            _validate_static_result(result, identity.static)
     generated = _generated_code_sha256(record.summary.results)
     if record.summary.status in {"stable", "unstable"} and generated is None:
         raise MatrixCapabilityEvidenceError(

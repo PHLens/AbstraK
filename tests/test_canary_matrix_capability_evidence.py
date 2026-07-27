@@ -39,6 +39,7 @@ from abstrak.canary.matrix_preflight import (
     build_pending_environment,
 )
 from abstrak.canary.matrix_runner import MatrixTransportContext
+from abstrak.canary.remote import WorkerExecutionError
 from abstrak.canary.target_adapters import validate_target_source
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +221,13 @@ class _Worker:
         mode = self.modes.get(artifact_id, "pass")
         if mode == "infrastructure":
             raise RuntimeError("SSH connection reset")
+        if mode == "job-timeout":
+            raise WorkerExecutionError(
+                "timeout",
+                "deterministic capability timeout",
+                health={"status": "healthy"},
+                job_scoped=True,
+            )
 
         static = validate_target_source(job.candidate_source, job.target)
         assert static.valid
@@ -378,7 +386,10 @@ def test_probe_study_is_atomic_recomputable_and_exactly_resumable(
     assert len(worker.calls) == 5 * 3
 
 
-@pytest.mark.parametrize("mode", ["wrong-result", "compile-error", "equal-control"])
+@pytest.mark.parametrize(
+    "mode",
+    ["wrong-result", "compile-error", "equal-control", "job-timeout"],
+)
 def test_terminal_scientific_failures_are_derived_as_failed_evidence(
     tmp_path: Path,
     probe_fixture: ProbeFixture,
@@ -497,6 +508,42 @@ def test_unsealed_staging_is_discarded_but_sealed_tampering_fails_closed(
             probe_fixture.inputs,
             records,
         )
+
+
+def test_checksum_bearing_capability_staging_fails_closed(
+    tmp_path: Path,
+    probe_fixture: ProbeFixture,
+) -> None:
+    worker = _Worker(probe_fixture.manifest)
+    records = run_capability_probe_study(
+        worker,
+        artifact_root=tmp_path,
+        manifest=probe_fixture.manifest,
+        inputs=probe_fixture.inputs,
+    )
+    final = Path(records[0].artifact_directory)
+    staging = final.with_name(f"{final.name}.incomplete")
+    final.chmod(0o700)
+    final.rename(staging)
+    checksum = staging / "sha256sums.txt"
+    checksum.chmod(0o600)
+    checksum.write_bytes(checksum.read_bytes() + b"tampered\n")
+    completed_calls = len(worker.calls)
+
+    with pytest.raises(
+        MatrixCapabilityEvidenceError,
+        match="checksum-bearing capability staging artifact is invalid",
+    ):
+        run_capability_probe_study(
+            worker,
+            artifact_root=tmp_path,
+            manifest=probe_fixture.manifest,
+            inputs=probe_fixture.inputs,
+        )
+
+    assert len(worker.calls) == completed_calls
+    assert not final.exists()
+    assert staging.is_dir()
 
 
 def test_resume_rejects_control_identity_drift_before_worker_execution(

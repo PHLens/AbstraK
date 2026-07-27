@@ -477,6 +477,10 @@ def run_or_resume_candidate_timing_artifact(
             raise PostprocessTimingError(
                 f"staging timing artifact cannot be a symbolic link: {timing_id}"
             )
+        if not staging_path.is_dir():
+            raise PostprocessTimingError(
+                f"staging timing artifact is not a regular directory: {timing_id}"
+            )
         try:
             staged = _load_existing_record(
                 staging_path,
@@ -484,9 +488,8 @@ def run_or_resume_candidate_timing_artifact(
                 expected_manifest=expected_manifest,
             )
         except PostprocessTimingError:
-            try:
-                verify_trajectory(staging_path)
-            except (OSError, TrajectoryArtifactError):
+            checksum = staging_path / "sha256sums.txt"
+            if not checksum.exists() and not checksum.is_symlink():
                 shutil.rmtree(staging_path)
             else:
                 raise

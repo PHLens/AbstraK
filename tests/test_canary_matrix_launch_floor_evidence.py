@@ -55,6 +55,7 @@ from abstrak.canary.matrix_preflight import (
     build_pending_environment,
 )
 from abstrak.canary.matrix_runner import MatrixTransportContext
+from abstrak.canary.remote import WorkerExecutionError
 from abstrak.canary.target_adapters import validate_target_source
 from abstrak.canary.targets import get_target_stack
 from abstrak.canary.tasks import get_task_pack, load_oracle_source
@@ -369,6 +370,13 @@ class _LaunchWorker:
         self.calls.append(job)
         if self.mode == "infrastructure":
             raise RuntimeError("SSH connection reset")
+        if self.mode == "job-timeout":
+            raise WorkerExecutionError(
+                "timeout",
+                "deterministic launch timeout",
+                health={"status": "healthy"},
+                job_scoped=True,
+            )
         assert job.timing is not None
         if self.mode == "unstable":
             samples = tuple(
@@ -622,6 +630,31 @@ def test_worker_failure_is_infrastructure_only_and_leaves_no_probe_artifact(
     assert not (study_root / f"{artifact_id}.incomplete").exists()
 
 
+def test_job_scoped_timeout_is_sealed_as_scientific_failed_evidence(
+    tmp_path: Path,
+    launch_fixture: LaunchFixture,
+) -> None:
+    worker = _LaunchWorker(launch_fixture.manifest, mode="job-timeout")
+
+    record = run_launch_floor_probe(
+        worker,
+        artifact_root=tmp_path,
+        manifest=launch_fixture.manifest,
+        probe_input=launch_fixture.probe_input,
+    )
+    evidence = derive_launch_floor_evidence(
+        launch_fixture.manifest,
+        launch_fixture.probe_input,
+        record,
+    )
+
+    assert record.summary.status == "correctness_failure"
+    assert record.summary.results[0].status == "timeout"
+    assert evidence.status == "fail"
+    assert evidence.failure_reason
+    verify_trajectory(record.artifact_directory)
+
+
 def test_unstable_probe_is_sealed_as_terminal_failed_evidence(
     tmp_path: Path,
     launch_fixture: LaunchFixture,
@@ -727,6 +760,41 @@ def test_checksum_valid_extra_file_in_sealed_staging_fails_closed(
     assert not final.exists()
     assert staging.is_dir()
     assert len(worker.calls) == FORMAL_FLOOR_TIMING.repetitions
+
+
+def test_checksum_corrupt_launch_staging_fails_closed(
+    tmp_path: Path,
+    launch_fixture: LaunchFixture,
+) -> None:
+    worker = _LaunchWorker(launch_fixture.manifest)
+    record = run_launch_floor_probe(
+        worker,
+        artifact_root=tmp_path,
+        manifest=launch_fixture.manifest,
+        probe_input=launch_fixture.probe_input,
+    )
+    final = Path(record.artifact_directory)
+    staging = final.with_name(f"{final.name}.incomplete")
+    os.replace(final, staging)
+    checksum = staging / "sha256sums.txt"
+    checksum.chmod(0o600)
+    checksum.write_bytes(checksum.read_bytes() + b"tampered\n")
+    completed_calls = len(worker.calls)
+
+    with pytest.raises(
+        MatrixLaunchFloorEvidenceError,
+        match="cannot run or resume launch probe",
+    ):
+        run_launch_floor_probe(
+            worker,
+            artifact_root=tmp_path,
+            manifest=launch_fixture.manifest,
+            probe_input=launch_fixture.probe_input,
+        )
+
+    assert len(worker.calls) == completed_calls
+    assert not final.exists()
+    assert staging.is_dir()
 
 
 def test_build_manifest_recomputes_and_rejects_baseline_raw_drift(

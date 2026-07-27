@@ -21,6 +21,7 @@ from abstrak.canary.matrix_floor_evidence import (
     MatrixFloorEvidenceError,
     derive_task_floor_records,
     gate_artifact_sha256,
+    validate_gate_summary,
 )
 from abstrak.canary.matrix_preflight import (
     FORMAL_FLOOR_TIMING,
@@ -428,6 +429,112 @@ def _clone_attempt(
             "results": results,
         }
     )
+
+
+def test_recomputes_job_scoped_timeout_classification_from_raw_result(
+    tmp_path: Path,
+) -> None:
+    task = _task()
+    target = _targets()[0]
+    source = _source("job scoped timeout")
+    candidate_sha256 = _digest(source)
+    job = WorkerJob(
+        job_id="baseline-floor-task-timeout",
+        kind="baseline",
+        task=task,
+        target=target,
+        case_ids=tuple(case.id for case in task.sealed_cases),
+        candidate_source=source,
+        candidate_sha256=candidate_sha256,
+        timing=FORMAL_FLOOR_TIMING.model_copy(update={"repetitions": 1}),
+    )
+    result = WorkerResult(
+        job_id=job.job_id,
+        job_sha256=job.sha256,
+        input_sha256=job.input_sha256,
+        candidate_sha256=job.candidate_sha256,
+        status="timeout",
+        metadata={
+            "post_job_gpu_health": {"status": "healthy"},
+            "failure_category": "timeout",
+            "failure_scope": "job",
+        },
+        error="deterministic job timeout",
+    )
+    attempt = TimingAttemptSummary(
+        attempt=1,
+        status="correctness_failure",
+        stable=False,
+        jobs=(job,),
+        results=(result,),
+        error=result.error,
+    )
+    summary = TimingProtocolSummary(
+        job_prefix="baseline-floor-task-timeout",
+        task_id=task.id,
+        target_id=target.id,
+        candidate_sha256=candidate_sha256,
+        job_kind="baseline",
+        device="cuda:0",
+        timing=FORMAL_FLOOR_TIMING,
+        status="correctness_failure",
+        stable=False,
+        attempts=(attempt,),
+        jobs=(job,),
+        results=(result,),
+        error=result.error,
+    )
+    record = GateRecord(
+        kind="baseline",
+        task_id=task.id,
+        target_id=target.id,
+        variant="eager",
+        source_sha256=candidate_sha256,
+        artifact_directory=str(tmp_path),
+        summary=summary,
+    )
+    task_asset = TaskAssetBinding(
+        task_id=task.id,
+        task_pack_sha256=sha256_json(task),
+        reference_source_sha256=task.source_sha256,
+        expert_source_sha256=_digest(_source("expert")),
+        baselines=(
+            BaselineAssetBinding(
+                variant="eager",
+                source_sha256=candidate_sha256,
+            ),
+        ),
+    )
+    target_asset = TargetAssetBinding(
+        target_id=target.id,
+        target_stack_sha256=sha256_json(target),
+        card_sha256=target.card_sha256,
+    )
+
+    validate_gate_summary(record, task=task_asset, target=target_asset)
+
+    tampered_result = result.model_copy(
+        update={
+            "metadata": {
+                **result.metadata,
+                "failure_scope": "infrastructure",
+            }
+        }
+    )
+    tampered_attempt = attempt.model_copy(update={"results": (tampered_result,)})
+    tampered_summary = summary.model_copy(
+        update={
+            "attempts": (tampered_attempt,),
+            "results": (tampered_result,),
+        }
+    )
+
+    with pytest.raises(MatrixFloorEvidenceError, match="failed timing status differs"):
+        validate_gate_summary(
+            record.model_copy(update={"summary": tampered_summary}),
+            task=task_asset,
+            target=target_asset,
+        )
 
 
 def test_derives_verified_floor_and_fastest_stable_baseline(tmp_path: Path) -> None:

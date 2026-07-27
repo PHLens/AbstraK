@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import math
 import statistics
+from collections.abc import Mapping
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -18,7 +19,7 @@ from abstrak.canary.contracts import (
     WorkerJob,
     WorkerResult,
 )
-from abstrak.canary.loop import WorkerExecutor
+from abstrak.canary.loop import WorkerExecutor, worker_exception_result
 
 TimingRunStatus = Literal[
     "stable",
@@ -30,6 +31,48 @@ TimingJobKind = Literal["sealed", "oracle", "baseline"]
 
 DEFAULT_FORMAL_TIMING = TimingSpec()
 _INFRASTRUCTURE_FAILURES = {"environment_error", "timeout", "worker_error"}
+
+
+def is_proven_job_scoped_resource_failure(result: WorkerResult) -> bool:
+    """Return whether structured provenance proves a healthy-GPU job failure."""
+
+    category = result.metadata.get("failure_category")
+    health = result.metadata.get("post_job_gpu_health")
+    expected_status = {
+        "timeout": "timeout",
+        "oom": "runtime_error",
+    }.get(category)
+    return (
+        result.metadata.get("failure_scope") == "job"
+        and isinstance(health, Mapping)
+        and health.get("status") == "healthy"
+        and expected_status is not None
+        and result.status == expected_status
+    )
+
+
+def timing_failure_status(
+    result: WorkerResult,
+) -> Literal["worker_failure", "correctness_failure"]:
+    """Classify one non-completed result from recomputable structured evidence."""
+
+    if result.status == "completed":
+        raise ValueError("completed worker results are not timing failures")
+    scope = result.metadata.get("failure_scope")
+    if scope is not None:
+        if is_proven_job_scoped_resource_failure(result):
+            return "correctness_failure"
+        return "worker_failure"
+    if result.status in _INFRASTRUCTURE_FAILURES:
+        return "worker_failure"
+    return "correctness_failure"
+
+
+def timing_protocol_job_ceiling(timing: TimingSpec) -> int:
+    """Return the exact worst-case worker-job count for one timing protocol."""
+
+    validated = TimingSpec.model_validate(timing)
+    return 2 * validated.repetitions
 
 
 class TimingAttemptSummary(CanaryModel):
@@ -241,12 +284,17 @@ def run_timing_protocol(
             jobs.append(job)
             try:
                 result = worker.execute(job)
-                results.append(result)
                 result.verify_for_job(job)
             except Exception as error:
+                result = worker_exception_result(
+                    job,
+                    error,
+                    scientific_job_failures=True,
+                )
+                results.append(result)
                 failed = _failed_attempt(
                     attempt=attempt_number,
-                    status="worker_failure",
+                    status=timing_failure_status(result),
                     jobs=jobs,
                     results=results,
                     medians=process_medians,
@@ -264,13 +312,10 @@ def run_timing_protocol(
                     job_kind=job_kind,
                     attempts=attempts,
                 )
+            results.append(result)
 
             if result.status != "completed" or not result.correct:
-                failure_status = (
-                    "worker_failure"
-                    if result.status in _INFRASTRUCTURE_FAILURES
-                    else "correctness_failure"
-                )
+                failure_status = timing_failure_status(result)
                 failed = _failed_attempt(
                     attempt=attempt_number,
                     status=failure_status,

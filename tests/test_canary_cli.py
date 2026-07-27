@@ -167,6 +167,338 @@ def test_inspect_study_is_offline_and_reports_dynamic_phase_ceilings(capsys, mon
     ]
 
 
+PREFLIGHT_MAX_WORKER_JOBS = 372
+
+
+def _preflight_study_arguments(
+    *extra: str,
+    expected_max_jobs: int = PREFLIGHT_MAX_WORKER_JOBS,
+) -> list[str]:
+    return [
+        "preflight-study",
+        "--study-spec",
+        str(CAPABILITY_STUDY),
+        "--expected-study-sha256",
+        CAPABILITY_STUDY_SHA256,
+        "--asset-root",
+        str(CAPABILITY_STUDY.parent),
+        "--artifact-root",
+        "/local/preflight-artifacts",
+        "--expected-max-jobs",
+        str(expected_max_jobs),
+        "--ssh-host",
+        "gpu.example",
+        "--ssh-port",
+        "30554",
+        "--worker-root",
+        "/mnt/lipenghui/AbstraK",
+        "--worker-python",
+        "/tmp/abstrak-gpu-venv/bin/python",
+        "--worker-pythonpath",
+        "/mnt/lipenghui/AbstraK/src",
+        "--worker-kernelbench-root",
+        "/mnt/lipenghui/KernelBench",
+        "--worker-asset-root",
+        "/mnt/lipenghui/AbstraK/benchmarks/capability-gate-a100",
+        "--worker-timeout",
+        "777",
+        "--device",
+        "cuda:1",
+        "--expected-accelerator",
+        "NVIDIA A100-SXM4-80GB",
+        "--expected-compute-capability",
+        "8.0",
+        "--expected-python-version",
+        "3.11.9",
+        "--expected-tilelang-version",
+        "0.1.7",
+        "--expected-triton-version",
+        "3.7.1",
+        "--expected-torch-version",
+        "2.8.0+cu128",
+        "--expected-cuda-version",
+        "12.8",
+        "--expected-driver-version",
+        "570.133.20",
+        "--expected-kernelbench-revision",
+        "b" * 40,
+        *extra,
+    ]
+
+
+def test_preflight_study_live_guard_precedes_study_revision_and_remote_access(
+    capsys,
+    monkeypatch,
+) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("preflight side effect occurred before --live guard")
+
+    for name in (
+        "load_study_spec",
+        "build_capability_asset_manifest",
+        "read_clean_controller_revision",
+        "_preflight_transport",
+        "run_matrix_preflight",
+    ):
+        monkeypatch.setattr(cli, name, unexpected)
+
+    exit_code = cli.main(_preflight_study_arguments())
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "requires --live" in capsys.readouterr().err
+
+
+def test_preflight_study_hash_guard_precedes_revision_and_remote_access(
+    capsys,
+    monkeypatch,
+) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("preflight continued after study hash mismatch")
+
+    for name in (
+        "build_capability_asset_manifest",
+        "read_clean_controller_revision",
+        "_preflight_transport",
+        "run_matrix_preflight",
+    ):
+        monkeypatch.setattr(cli, name, unexpected)
+    arguments = _preflight_study_arguments("--live")
+    arguments[arguments.index(CAPABILITY_STUDY_SHA256)] = "0" * 64
+
+    exit_code = cli.main(arguments)
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "study manifest SHA-256 mismatch" in capsys.readouterr().err
+
+
+def test_preflight_study_job_ceiling_guard_precedes_revision_and_remote_access(
+    capsys,
+    monkeypatch,
+) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("preflight continued after worker-job ceiling mismatch")
+
+    for name in (
+        "read_clean_controller_revision",
+        "_preflight_transport",
+        "run_matrix_preflight",
+    ):
+        monkeypatch.setattr(cli, name, unexpected)
+
+    exit_code = cli.main(
+        _preflight_study_arguments(
+            "--live",
+            expected_max_jobs=PREFLIGHT_MAX_WORKER_JOBS - 1,
+        )
+    )
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert (
+        f"frozen preflight ceiling ({PREFLIGHT_MAX_WORKER_JOBS})"
+        in capsys.readouterr().err
+    )
+
+
+def test_preflight_study_maps_parser_inputs_to_generic_runner_without_provider_access(
+    capsys,
+    monkeypatch,
+) -> None:
+    revision = "a" * 40
+    hashes = {
+        "assets": "1" * 64,
+        "environment": "2" * 64,
+        "floor": "3" * 64,
+        "execution_context": "4" * 64,
+        "receipt": "5" * 64,
+        "bundle": "6" * 64,
+        "contract": "7" * 64,
+        "probe": "8" * 64,
+    }
+    protocols = tuple(
+        SimpleNamespace(kind=kind)
+        for kind in (
+            "oracle",
+            "oracle",
+            "baseline",
+            "capability",
+            "capability",
+            "capability",
+            "launch",
+        )
+    )
+    result = SimpleNamespace(
+        resumed_ready_bundle=False,
+        contract=SimpleNamespace(
+            protocols=protocols,
+            max_worker_jobs_per_invocation=PREFLIGHT_MAX_WORKER_JOBS,
+            sha256=hashes["contract"],
+        ),
+        environment_probe=SimpleNamespace(sha256=hashes["probe"]),
+        bundle=SimpleNamespace(
+            assets=SimpleNamespace(sha256=hashes["assets"]),
+            environment=SimpleNamespace(sha256=hashes["environment"]),
+            floor=SimpleNamespace(sha256=hashes["floor"]),
+            execution_context=SimpleNamespace(sha256=hashes["execution_context"]),
+            receipt=SimpleNamespace(sha256=hashes["receipt"]),
+            sha256=hashes["bundle"],
+        ),
+        preflight_directory=Path("/sealed/preflight-ready"),
+    )
+    observed: dict[str, Any] = {}
+    original_asset_builder = cli.build_capability_asset_manifest
+
+    def build_assets(
+        pinned: object,
+        schedule: object,
+        *,
+        asset_root: Path,
+    ) -> object:
+        observed["asset_builder"] = (pinned, schedule, asset_root)
+        return original_asset_builder(pinned, schedule, asset_root=asset_root)
+
+    def run_preflight(*args: Any, **kwargs: Any) -> object:
+        observed["run"] = (args, kwargs)
+        return result
+
+    def read_revision(root: Path) -> str:
+        observed["revision_root"] = root
+        return revision
+
+    monkeypatch.setattr(cli, "build_capability_asset_manifest", build_assets)
+    monkeypatch.setattr(cli, "read_clean_controller_revision", read_revision)
+    monkeypatch.setattr(cli, "run_matrix_preflight", run_preflight)
+    for name in (
+        "load_app_config",
+        "load_auth_store",
+        "runtime_environment",
+        "ProviderClient",
+    ):
+        monkeypatch.setattr(
+            cli,
+            name,
+            lambda *args, _name=name, **kwargs: (_ for _ in ()).throw(
+                AssertionError(f"preflight-study accessed provider path {_name}")
+            ),
+        )
+
+    exit_code = cli.main(_preflight_study_arguments("--live"))
+
+    output = json.loads(capsys.readouterr().out)
+    assert exit_code == cli.EXIT_OK
+    assert capsys.readouterr().err == ""
+    pinned, schedule, assets, pending_environment = observed["run"][0]
+    run_options = observed["run"][1]
+    assert observed["revision_root"] == cli.REPOSITORY_ROOT
+    assert observed["asset_builder"] == (
+        pinned,
+        schedule,
+        CAPABILITY_STUDY.parent.resolve(),
+    )
+    assert pending_environment.controller_revision == revision
+    assert pending_environment.worker_revision == revision
+    assert pending_environment.accelerator == "NVIDIA A100-SXM4-80GB"
+    assert pending_environment.compute_capability == "8.0"
+    assert pending_environment.python_version == "3.11.9"
+    assert pending_environment.tilelang_version == "0.1.7"
+    assert pending_environment.triton_version == "3.7.1"
+    assert pending_environment.torch_version == "2.8.0+cu128"
+    assert pending_environment.cuda_version == "12.8"
+    assert pending_environment.driver_version == "570.133.20"
+    assert pending_environment.kernelbench_revision == "b" * 40
+    assert pending_environment.transport.model_dump(mode="json") == {
+        "schema_version": "abstrak-matrix-transport-context.v1",
+        "kind": "ssh",
+        "host": "gpu.example",
+        "port": 30554,
+        "worker_root": "/mnt/lipenghui/AbstraK",
+        "python_executable": "/tmp/abstrak-gpu-venv/bin/python",
+        "pythonpath": "/mnt/lipenghui/AbstraK/src",
+        "kernelbench_root": "/mnt/lipenghui/KernelBench",
+        "asset_root": (
+            "/mnt/lipenghui/AbstraK/benchmarks/capability-gate-a100"
+        ),
+        "sandbox": "bubblewrap",
+        "device": "cuda:1",
+        "timeout_seconds": 777.0,
+        "network_isolated": True,
+        "filesystem_read_only": True,
+    }
+    assert run_options == {
+        "artifact_root": "/local/preflight-artifacts",
+        "asset_root": CAPABILITY_STUDY.parent.resolve(),
+        "baseline_target_id": assets.targets[0].target_id,
+        "live": True,
+        "expected_max_worker_jobs_per_invocation": PREFLIGHT_MAX_WORKER_JOBS,
+    }
+    assert output == {
+        "status": "ready",
+        "resumed_ready_bundle": False,
+        "study_id": pinned.spec.study_id,
+        "study_spec_sha256": CAPABILITY_STUDY_SHA256,
+        "schedule_sha256": schedule.sha256,
+        "asset_manifest_sha256": hashes["assets"],
+        "environment_manifest_sha256": hashes["environment"],
+        "floor_manifest_sha256": hashes["floor"],
+        "execution_context_sha256": hashes["execution_context"],
+        "preflight_receipt_sha256": hashes["receipt"],
+        "preflight_bundle_sha256": hashes["bundle"],
+        "preflight_contract_sha256": hashes["contract"],
+        "environment_probe_artifact_sha256": hashes["probe"],
+        "protocol_counts": {
+            "oracle": 2,
+            "baseline": 1,
+            "capability": 3,
+            "launch": 1,
+        },
+        "max_worker_jobs_per_invocation": PREFLIGHT_MAX_WORKER_JOBS,
+        "preflight_directory": "/sealed/preflight-ready",
+    }
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_exit", "message"),
+    [
+        (
+            cli.MatrixPreflightInfrastructureError("remote health failed"),
+            cli.EXIT_WORKER,
+            "preflight infrastructure error",
+        ),
+        (
+            cli.MatrixPreflightInvalidFloorError("launch floor failed"),
+            cli.EXIT_ARTIFACT,
+            "preflight invalid floor",
+        ),
+        (
+            cli.MatrixPreflightArtifactError("raw checksum mismatch"),
+            cli.EXIT_ARTIFACT,
+            "preflight artifact error",
+        ),
+    ],
+)
+def test_preflight_study_preserves_runner_failure_category(
+    error: Exception,
+    expected_exit: int,
+    message: str,
+    capsys,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "read_clean_controller_revision",
+        lambda root: "a" * 40,
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_matrix_preflight",
+        lambda *args, **kwargs: (_ for _ in ()).throw(error),
+    )
+
+    exit_code = cli.main(_preflight_study_arguments("--live"))
+
+    assert exit_code == expected_exit
+    assert message in capsys.readouterr().err
+
+
 def _run_study_arguments(*extra: str) -> list[str]:
     return [
         "run-study",

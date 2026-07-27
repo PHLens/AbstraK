@@ -943,11 +943,20 @@ def _remove_unsealed_staging(directory: Path) -> bool:
         raise MatrixLaunchFloorEvidenceError(
             "launch-floor staging artifact cannot be a symbolic link"
         )
-    try:
-        verify_trajectory(directory)
-    except (OSError, TrajectoryArtifactError):
+    if not directory.is_dir():
+        raise MatrixLaunchFloorEvidenceError(
+            "launch-floor staging artifact is not a regular directory"
+        )
+    checksum = directory / "sha256sums.txt"
+    if not checksum.exists() and not checksum.is_symlink():
         shutil.rmtree(directory)
         return True
+    try:
+        verify_trajectory(directory)
+    except (OSError, TrajectoryArtifactError) as error:
+        raise MatrixLaunchFloorEvidenceError(
+            "checksum-bearing launch-floor staging artifact is invalid"
+        ) from error
     return False
 
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 from collections import deque
+from typing import Any
 
+import pytest
 from pydantic import ValidationError
 
 from abstrak.canary.contracts import (
@@ -13,8 +15,9 @@ from abstrak.canary.contracts import (
     WorkerJob,
     WorkerResult,
 )
+from abstrak.canary.remote import FailureCategory, WorkerExecutionError
 from abstrak.canary.tasks import get_task_pack
-from abstrak.canary.timing import run_timing_protocol
+from abstrak.canary.timing import run_timing_protocol, timing_protocol_job_ceiling
 
 
 def _target() -> TargetStackSpec:
@@ -75,8 +78,18 @@ class FakeWorker:
         )
 
 
+class ExceptionWorker:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+        self.jobs: list[WorkerJob] = []
+
+    def execute(self, job: WorkerJob) -> WorkerResult:
+        self.jobs.append(job)
+        raise self.error
+
+
 def _run(
-    worker: FakeWorker,
+    worker: Any,
     timing: TimingSpec | None = None,
     *,
     job_kind: str = "sealed",
@@ -189,8 +202,120 @@ def test_worker_failure_stops_without_retry() -> None:
     assert summary.stable is False
     assert len(summary.attempts) == 1
     assert len(summary.jobs) == len(worker.jobs) == 1
-    assert summary.results == ()
+    assert len(summary.results) == 1
+    assert summary.results[0].status == "worker_error"
+    assert summary.results[0].metadata["failure_scope"] == "infrastructure"
     assert summary.error == "RuntimeError: GPU worker unavailable"
+
+
+@pytest.mark.parametrize(
+    ("category", "worker_status"),
+    (("timeout", "timeout"), ("oom", "runtime_error")),
+)
+def test_healthy_job_scoped_resource_failure_is_scientific(
+    category: FailureCategory,
+    worker_status: str,
+) -> None:
+    worker = ExceptionWorker(
+        WorkerExecutionError(
+            category,
+            f"deterministic {category}",
+            health={"status": "healthy"},
+            job_scoped=True,
+        )
+    )
+
+    summary = _run(
+        worker,
+        TimingSpec(warmup_runs=2, trial_runs=4, repetitions=3),
+    )
+
+    assert summary.status == "correctness_failure"
+    assert len(summary.jobs) == len(summary.results) == len(worker.jobs) == 1
+    result = summary.results[0]
+    assert result.status == worker_status
+    assert result.metadata == {
+        "post_job_gpu_health": {"status": "healthy"},
+        "failure_category": category,
+        "failure_scope": "job",
+    }
+    result.verify_for_job(summary.jobs[0])
+
+
+@pytest.mark.parametrize(
+    ("error", "category"),
+    (
+        (
+            WorkerExecutionError(
+                "timeout",
+                "unscoped SSH timeout",
+                health={"status": "healthy"},
+            ),
+            "timeout",
+        ),
+        (
+            WorkerExecutionError(
+                "timeout",
+                "GPU unhealthy after timeout",
+                health={"status": "unhealthy"},
+                job_scoped=True,
+            ),
+            "timeout",
+        ),
+        (
+            WorkerExecutionError(
+                "health_check_failed",
+                "post-job health unavailable",
+                health={"status": "check_failed"},
+            ),
+            "health_check_failed",
+        ),
+    ),
+)
+def test_unproven_resource_or_transport_failure_remains_infrastructure(
+    error: WorkerExecutionError,
+    category: str,
+) -> None:
+    worker = ExceptionWorker(error)
+
+    summary = _run(
+        worker,
+        TimingSpec(warmup_runs=2, trial_runs=4, repetitions=3),
+    )
+
+    assert summary.status == "worker_failure"
+    assert len(summary.results) == 1
+    assert summary.results[0].status == "worker_error"
+    assert summary.results[0].metadata["failure_category"] == category
+    assert summary.results[0].metadata["failure_scope"] == "infrastructure"
+
+
+def test_native_timeout_without_job_scope_remains_infrastructure() -> None:
+    class NativeTimeoutWorker:
+        def __init__(self) -> None:
+            self.jobs: list[WorkerJob] = []
+
+        def execute(self, job: WorkerJob) -> WorkerResult:
+            self.jobs.append(job)
+            return WorkerResult(
+                job_id=job.job_id,
+                job_sha256=job.sha256,
+                input_sha256=job.input_sha256,
+                candidate_sha256=job.candidate_sha256,
+                status="timeout",
+                error="worker returned an unscoped timeout",
+            )
+
+    worker = NativeTimeoutWorker()
+
+    summary = _run(
+        worker,
+        TimingSpec(warmup_runs=2, trial_runs=4, repetitions=3),
+    )
+
+    assert summary.status == "worker_failure"
+    assert summary.results[0].status == "timeout"
+    assert "failure_scope" not in summary.results[0].metadata
 
 
 def test_correctness_failure_stops_without_retry() -> None:
@@ -210,3 +335,20 @@ def test_oracle_job_kind_is_preserved_in_every_clean_process() -> None:
 
     assert summary.job_kind == "oracle"
     assert {job.kind for job in summary.jobs} == {"oracle"}
+
+
+def test_timing_protocol_job_ceiling_is_two_complete_attempts() -> None:
+    assert timing_protocol_job_ceiling(TimingSpec(repetitions=1)) == 2
+    assert timing_protocol_job_ceiling(TimingSpec(repetitions=7)) == 14
+    assert timing_protocol_job_ceiling(TimingSpec(repetitions=20)) == 40
+
+
+def test_timing_protocol_job_ceiling_reuses_timing_spec_validation() -> None:
+    below_minimum: Any = {"repetitions": 0}
+    above_maximum: Any = {"repetitions": 21}
+
+    with pytest.raises(ValidationError):
+        timing_protocol_job_ceiling(below_minimum)
+
+    with pytest.raises(ValidationError):
+        timing_protocol_job_ceiling(above_maximum)

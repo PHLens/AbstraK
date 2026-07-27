@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -912,6 +913,59 @@ def test_sealed_preflight_bundle_round_trips_with_strict_typed_records(
     assert bundle.receipt.execution_context_sha256 == ready.context.sha256
     assert bundle.receipt.evidence_closure_sha256
     assert (directory / "sha256sums.txt").is_file()
+
+    resumed = seal_preflight_bundle(
+        tmp_path / "artifacts",
+        ready.pinned,
+        ready.schedule,
+        assets=ready.assets,
+        floor=ready.floor,
+        environment=ready.environment,
+        execution_context=ready.context,
+    )
+    assert resumed == directory
+
+    staging = directory.with_name(f"{directory.name}.incomplete")
+    os.replace(directory, staging)
+    promoted = seal_preflight_bundle(
+        tmp_path / "artifacts",
+        ready.pinned,
+        ready.schedule,
+        assets=ready.assets,
+        floor=ready.floor,
+        environment=ready.environment,
+        execution_context=ready.context,
+    )
+    assert promoted == directory
+    assert directory.is_dir()
+    assert not staging.exists()
+
+
+def test_checksum_bearing_preflight_staging_fails_closed(
+    tmp_path: Path,
+    ready: ReadyInputs,
+) -> None:
+    arguments = {
+        "root": tmp_path / "artifacts",
+        "pinned": ready.pinned,
+        "schedule": ready.schedule,
+        "assets": ready.assets,
+        "floor": ready.floor,
+        "environment": ready.environment,
+        "execution_context": ready.context,
+    }
+    final = seal_preflight_bundle(**arguments)
+    staging = final.with_name(f"{final.name}.incomplete")
+    os.replace(final, staging)
+    checksum = staging / "sha256sums.txt"
+    checksum.chmod(0o600)
+    checksum.write_bytes(checksum.read_bytes() + b"tampered\n")
+
+    with pytest.raises(MatrixPreflightError):
+        seal_preflight_bundle(**arguments)
+
+    assert not final.exists()
+    assert staging.is_dir()
 
 
 def test_public_runner_derives_context_assets_and_ceiling_from_sealed_preflight(

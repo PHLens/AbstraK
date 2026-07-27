@@ -55,11 +55,19 @@ def _candidate_hash(source: str) -> str:
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
 
 
-def _worker_failure(
+def worker_exception_result(
     job: WorkerJob,
     error: Exception,
-    policy: AgentLoopPolicy,
+    *,
+    scientific_job_failures: bool,
 ) -> WorkerResult:
+    """Convert one executor exception into a hash-linked structured result.
+
+    A timeout or OOM is scientific only when the executor proves that it was
+    scoped to this job and that the GPU remained healthy.  Every other
+    exception remains an infrastructure failure.
+    """
+
     health = getattr(error, "health", None)
     category = getattr(error, "category", None)
     job_scoped = getattr(error, "job_scoped", False)
@@ -67,13 +75,17 @@ def _worker_failure(
     status = "worker_error"
     metadata = {"post_job_gpu_health": health} if health is not None else {}
     if (
-        policy.response_parser == "candidate_only"
+        scientific_job_failures
         and job_scoped
         and health_is_healthy
         and category in {"timeout", "oom"}
     ):
         status = "timeout" if category == "timeout" else "runtime_error"
         metadata = {**metadata, "failure_category": category, "failure_scope": "job"}
+    else:
+        metadata["failure_scope"] = "infrastructure"
+        if isinstance(category, str) and category:
+            metadata["failure_category"] = category
     return WorkerResult(
         job_id=job.job_id,
         job_sha256=job.sha256,
@@ -82,6 +94,18 @@ def _worker_failure(
         status=status,
         metadata=metadata,
         error=f"{type(error).__name__}: {error}",
+    )
+
+
+def _worker_failure(
+    job: WorkerJob,
+    error: Exception,
+    policy: AgentLoopPolicy,
+) -> WorkerResult:
+    return worker_exception_result(
+        job,
+        error,
+        scientific_job_failures=policy.response_parser == "candidate_only",
     )
 
 
