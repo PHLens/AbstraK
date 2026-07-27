@@ -26,6 +26,7 @@ from abstrak.canary.matrix_preflight import MatrixPreflightError, load_preflight
 from abstrak.canary.matrix_runner import (
     MatrixPhaseRunSummary,
     MatrixStudyRunError,
+    load_matrix_phase_contract,
     run_matrix_phase,
     validate_matrix_phase_guards,
 )
@@ -33,7 +34,16 @@ from abstrak.canary.matrix_runtime import (
     MatrixRuntimeError,
     MatrixStudyRuntime,
     build_authorized_ssh_worker,
+    read_clean_controller_revision,
     runtime_authorization,
+)
+from abstrak.canary.matrix_timing import (
+    MatrixCandidateTimingRecord,
+    MatrixTimingError,
+    build_matrix_timing_study_manifest,
+    discover_matrix_qualified_candidates,
+    run_matrix_candidate_timing,
+    seal_matrix_timing_study_manifest,
 )
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.remote import LocalWorkerExecutor, SshWorkerExecutor, WorkerExecutionError
@@ -229,6 +239,23 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         required=True,
         help="must equal the frozen full-phase ceiling, including one infrastructure retry",
+    )
+
+    time_study = subparsers.add_parser(
+        "time-study",
+        help="run or resume preflight-authorized timing for one terminal matrix phase",
+    )
+    time_study.add_argument("--study-spec", required=True)
+    time_study.add_argument("--expected-study-sha256", required=True)
+    time_study.add_argument("--phase", required=True)
+    time_study.add_argument("--preflight-directory", required=True)
+    time_study.add_argument("--artifact-root", default="artifacts/capability-gate-a100")
+    time_study.add_argument("--timing-study-id")
+    time_study.add_argument("--expected-qualified-candidates", type=int, required=True)
+    time_study.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge execution of generated GPU code under the frozen timing protocol",
     )
 
     subparsers.add_parser("worker", help="run one JSON worker job or GPU health check")
@@ -638,6 +665,118 @@ def _matrix_run_error_exit_code(error: MatrixStudyRunError) -> int:
     return EXIT_ARTIFACT
 
 
+def _run_time_study(arguments: argparse.Namespace) -> int:
+    if arguments.live is not True:
+        raise CanaryCliError(
+            "time-study requires --live because it executes generated GPU code"
+        )
+    if arguments.expected_qualified_candidates < 0:
+        raise CanaryCliError("--expected-qualified-candidates must be non-negative")
+    pinned = load_study_spec(
+        arguments.study_spec,
+        expected_sha256=arguments.expected_study_sha256,
+    )
+    schedule = build_matrix_schedule(pinned.spec)
+    try:
+        schedule.cells_for_phase(arguments.phase)
+    except ValueError as error:
+        raise CanaryCliError(f"unknown matrix phase: {arguments.phase}") from error
+    gate = pinned.spec.gate
+    if gate is not None and arguments.phase == gate.reserve_phase_id:
+        raise CanaryCliError(
+            "reserve phase timing requires a sealed core analysis authorization"
+        )
+    timing_study_id = (
+        arguments.timing_study_id
+        or f"{pinned.spec.study_id}-{arguments.phase}-timing"
+    )
+    if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", timing_study_id) is None:
+        raise CanaryCliError("--timing-study-id must be a normalized identifier")
+
+    preflight = load_preflight_bundle(
+        arguments.preflight_directory,
+        pinned,
+        schedule,
+    )
+    candidates = discover_matrix_qualified_candidates(
+        artifact_root=arguments.artifact_root,
+        pinned=pinned,
+        phase_id=arguments.phase,
+        preflight=preflight,
+        schedule=schedule,
+    )
+    if arguments.expected_qualified_candidates != len(candidates):
+        raise CanaryCliError(
+            "--expected-qualified-candidates must equal the discovered sealed count "
+            f"({len(candidates)})"
+        )
+    contract = load_matrix_phase_contract(
+        arguments.artifact_root,
+        pinned,
+        arguments.phase,
+        execution_context=preflight.execution_context,
+        schedule=schedule,
+    )
+    manifest = build_matrix_timing_study_manifest(
+        pinned,
+        schedule,
+        arguments.phase,
+        preflight=preflight,
+        contract=contract,
+        candidates=candidates,
+        timing_study_id=timing_study_id,
+    )
+    authorization = runtime_authorization(preflight)
+    controller_revision = read_clean_controller_revision(REPOSITORY_ROOT)
+    if controller_revision != preflight.execution_context.controller_revision:
+        raise MatrixRuntimeError(
+            "controller revision differs from the preflight environment"
+        )
+    seal_matrix_timing_study_manifest(arguments.artifact_root, manifest)
+    worker = build_authorized_ssh_worker(authorization)
+    worker.validate_environment(manifest.device)
+
+    def progress(
+        index: int,
+        total: int,
+        record: MatrixCandidateTimingRecord,
+        resumed: bool,
+    ) -> None:
+        print(
+            json.dumps(
+                {
+                    "progress": f"{index}/{total}",
+                    "artifact_id": record.summary.job_prefix,
+                    "status": record.summary.status,
+                    "stable": record.summary.stable,
+                    "median_ms": record.summary.median_ms,
+                    "resumed": resumed,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    records = run_matrix_candidate_timing(
+        worker,
+        artifact_root=arguments.artifact_root,
+        manifest=manifest,
+        candidates=candidates,
+        progress=progress,
+    )
+    _emit(
+        {
+            "status": "complete",
+            "timing_study_id": timing_study_id,
+            "timing_study_manifest_sha256": manifest.sha256,
+            "candidate_count": len(records),
+            "stable_count": sum(record.summary.stable for record in records),
+            "missing_count": sum(not record.summary.stable for record in records),
+        }
+    )
+    return EXIT_OK
+
+
 def _run_trusted(arguments: argparse.Namespace) -> int:
     task = get_task_pack(arguments.task)
     target = get_target_stack(arguments.target)
@@ -912,6 +1051,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _inspect_study(arguments)
         if arguments.command == "run-study":
             return _run_study(arguments)
+        if arguments.command == "time-study":
+            return _run_time_study(arguments)
         if arguments.command == "run-trusted":
             return _run_trusted(arguments)
         if arguments.command == "run-gates":
@@ -943,6 +1084,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except MatrixStudyRunError as error:
         print(f"matrix run error: {error}", file=sys.stderr)
         return _matrix_run_error_exit_code(error)
+    except MatrixTimingError as error:
+        print(f"matrix timing error: {error}", file=sys.stderr)
+        return EXIT_ARTIFACT
     except TrajectoryArtifactError as error:
         print(f"artifact error: {error}", file=sys.stderr)
         return EXIT_ARTIFACT

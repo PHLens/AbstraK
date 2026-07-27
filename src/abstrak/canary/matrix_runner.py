@@ -383,10 +383,12 @@ class MatrixPhaseRunSummary(CanaryModel):
         return self
 
 
-def _attempt_identity(
+def matrix_attempt_identity(
     primary: MatrixCellArtifactIdentity,
     attempt_index: int,
 ) -> MatrixCellArtifactIdentity:
+    """Derive one bounded infrastructure-attempt identity from its primary cell."""
+
     payload = primary.model_dump(mode="json")
     payload.update(
         {
@@ -410,7 +412,7 @@ def _assert_plan_matches_contract(
         raise MatrixStudyRunError("phase plan cells differ from the frozen phase contract")
     for cell in plan.cells:
         primary = primary_by_id[cell.identity.trajectory_id]
-        if cell.identity != _attempt_identity(primary, cell.identity.attempt_index):
+        if cell.identity != matrix_attempt_identity(primary, cell.identity.attempt_index):
             raise MatrixStudyRunError(
                 "phase plan execution identity differs from the frozen phase contract"
             )
@@ -425,7 +427,7 @@ def _load_contract_attempts(
         primary = cell.identity
         maximum_attempt = contract.plan.infrastructure_retries
         for attempt_index in range(1 + maximum_attempt):
-            loaded = loader(_attempt_identity(primary, attempt_index))
+            loaded = loader(matrix_attempt_identity(primary, attempt_index))
             if loaded is not None:
                 attempts.append(loaded)
     return tuple(attempts)
@@ -482,6 +484,134 @@ def build_matrix_phase_contract(
         schedule=schedule,
     )
     return MatrixPhaseContract(execution_context=execution_context, plan=plan)
+
+
+def load_matrix_phase_contract(
+    artifact_root: str | Path,
+    pinned: PinnedStudySpec,
+    phase_id: str,
+    *,
+    execution_context: MatrixExecutionContext,
+    schedule: MatrixSchedule | None = None,
+) -> MatrixPhaseContract:
+    """Load a sealed phase contract and bind it to frozen offline inputs."""
+
+    frozen_schedule = schedule or build_matrix_schedule(pinned.spec)
+    if frozen_schedule.spec != pinned.spec or frozen_schedule.spec_sha256 != pinned.spec.sha256:
+        raise MatrixStudyRunError("matrix schedule differs from the pinned study spec")
+    try:
+        phase = frozen_schedule.spec.phase(phase_id)
+        expected_cells = frozen_schedule.cells_for_phase(phase_id)
+        expected_scientific_ceiling = frozen_schedule.phase_request_ceiling(phase_id)
+        expected_operational_ceiling = frozen_schedule.phase_operational_request_ceiling(phase_id)
+    except ValueError as error:
+        raise MatrixStudyRunError(f"unknown matrix phase: {phase_id}") from error
+
+    root = Path(artifact_root).expanduser()
+    directory = root / pinned.spec.study_id / f"phase-{phase_id}-contract"
+    if directory.is_symlink():
+        raise MatrixStudyRunError("phase contract artifact cannot be a symbolic link")
+    try:
+        resolved_root = root.resolve()
+        resolved_directory = directory.resolve(strict=True)
+        resolved_directory.relative_to(resolved_root)
+        if not resolved_directory.is_dir():
+            raise ValueError("phase contract artifact is not a directory")
+        verify_trajectory(resolved_directory)
+        contract = MatrixPhaseContract.model_validate_json(
+            (resolved_directory / "run-manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TrajectoryArtifactError) as error:
+        raise MatrixStudyRunError(f"phase contract artifact is invalid: {directory}") from error
+
+    plan = contract.plan
+    binding = (
+        plan.study_id,
+        plan.raw_study_sha256,
+        plan.spec_sha256,
+        plan.schedule_sha256,
+        plan.phase_id,
+        plan.max_calls_per_trajectory,
+        plan.infrastructure_retries,
+        plan.scientific_request_ceiling,
+        plan.operational_request_ceiling,
+        tuple(cell.identity.cell for cell in plan.cells),
+    )
+    expected_binding = (
+        pinned.spec.study_id,
+        pinned.sha256,
+        pinned.spec.sha256,
+        frozen_schedule.sha256,
+        phase_id,
+        phase.max_calls_per_trajectory,
+        phase.infrastructure_retries,
+        expected_scientific_ceiling,
+        expected_operational_ceiling,
+        expected_cells,
+    )
+    if binding != expected_binding or contract.execution_context != execution_context:
+        raise MatrixStudyRunError("phase contract differs from frozen study inputs")
+    return contract
+
+
+def resolve_terminal_contract_attempts(
+    contract: MatrixPhaseContract,
+    artifact_root: str | Path,
+) -> tuple[ExistingCellAttempt | None, ...]:
+    """Resolve every terminal cell attempt; exhausted infrastructure is explicit ``None``."""
+
+    loader = sealed_cell_identity_loader(artifact_root)
+
+    def load_exact(expected: MatrixCellArtifactIdentity) -> ExistingCellAttempt | None:
+        try:
+            attempt = loader(expected)
+        except (OSError, ValueError, TrajectoryArtifactError) as error:
+            raise MatrixStudyRunError(
+                f"matrix attempt artifact is invalid: {expected.artifact_trajectory_id}"
+            ) from error
+        if attempt is not None and attempt.identity != expected:
+            raise MatrixStudyRunError(
+                f"matrix attempt identity differs from its contract: "
+                f"{expected.artifact_trajectory_id}"
+            )
+        return attempt
+
+    terminal: list[ExistingCellAttempt | None] = []
+    for planned in contract.plan.cells:
+        primary_identity = planned.identity
+        retry_identity = matrix_attempt_identity(primary_identity, 1)
+        primary = load_exact(primary_identity)
+        retry = load_exact(retry_identity)
+        if primary is None:
+            if retry is not None:
+                raise MatrixStudyRunError(
+                    f"orphan retry artifact exists for {retry_identity.artifact_trajectory_id}"
+                )
+            raise MatrixStudyRunError(
+                f"matrix phase is incomplete at primary attempt: "
+                f"{primary_identity.trajectory_id}"
+            )
+        if contract.plan.infrastructure_retries == 0:
+            if retry is not None:
+                raise MatrixStudyRunError(
+                    f"unexpected retry artifact exists for {retry_identity.artifact_trajectory_id}"
+                )
+            terminal.append(None if primary.retryable_infrastructure else primary)
+            continue
+        if primary.retryable_infrastructure:
+            if retry is None:
+                raise MatrixStudyRunError(
+                    f"matrix phase is incomplete at retry attempt: "
+                    f"{primary_identity.trajectory_id}"
+                )
+            terminal.append(None if retry.retryable_infrastructure else retry)
+        else:
+            if retry is not None:
+                raise MatrixStudyRunError(
+                    f"unexpected retry artifact exists for {retry_identity.artifact_trajectory_id}"
+                )
+            terminal.append(primary)
+    return tuple(terminal)
 
 
 def _ensure_phase_contract(

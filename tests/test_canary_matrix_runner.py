@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,7 @@ from abstrak.canary.contracts import (
 )
 from abstrak.canary.manifests import PinnedStudySpec
 from abstrak.canary.matrix import MatrixStudySpec, PhaseSpec, TaskGroupSpec, build_matrix_schedule
+from abstrak.canary.matrix_preflight import FORMAL_FLOOR_TIMING
 from abstrak.canary.matrix_runner import (
     MatrixAgentBinding,
     MatrixAttemptRuntime,
@@ -26,6 +28,8 @@ from abstrak.canary.matrix_runner import (
     MatrixWorkerBinding,
     _run_authorized_matrix_phase,
     build_matrix_phase_contract,
+    load_matrix_phase_contract,
+    resolve_terminal_contract_attempts,
     run_matrix_phase,
 )
 from abstrak.canary.matrix_study import (
@@ -33,6 +37,10 @@ from abstrak.canary.matrix_study import (
     MatrixCellExecutionSpec,
     resolve_registered_target_identity,
     resolve_registered_task_identity,
+)
+from abstrak.canary.matrix_timing import (
+    build_matrix_timing_study_manifest,
+    discover_matrix_qualified_candidates,
 )
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.targets import get_target_stack, load_target_card
@@ -379,6 +387,37 @@ def _run(
     )
 
 
+def _preflight_view(pinned: PinnedStudySpec) -> SimpleNamespace:
+    schedule = build_matrix_schedule(pinned.spec)
+    task = get_task_pack("row-reduction-scale")
+    targets = tuple(get_target_stack(target_id) for target_id in pinned.spec.targets)
+    assets = SimpleNamespace(
+        study_id=pinned.spec.study_id,
+        raw_study_sha256=pinned.sha256,
+        spec_sha256=pinned.spec.sha256,
+        schedule_sha256=schedule.sha256,
+        tasks=(
+            SimpleNamespace(
+                task_id=task.id,
+                task_pack_sha256=sha256_json(task),
+            ),
+        ),
+        targets=tuple(
+            SimpleNamespace(
+                target_id=target.id,
+                target_stack_sha256=sha256_json(target),
+            )
+            for target in targets
+        ),
+    )
+    return SimpleNamespace(
+        assets=assets,
+        execution_context=_context(),
+        receipt=SimpleNamespace(sha256=_digest("preflight-receipt")),
+        floor=SimpleNamespace(timing=FORMAL_FLOOR_TIMING),
+    )
+
+
 def test_live_and_full_operational_guards_precede_artifacts_and_runtime(
     tmp_path: Path,
 ) -> None:
@@ -478,6 +517,96 @@ def test_infrastructure_retry_requires_a_new_invocation_and_runs_before_next_cel
     assert resumed.status == "complete"
     assert resumed.cumulative_attempts == resumed.cumulative_calls == 3
     assert resumed.cumulative_usage_complete is False
+    contract = load_matrix_phase_contract(
+        root,
+        pinned,
+        "core",
+        execution_context=_context(),
+    )
+    terminal = resolve_terminal_contract_attempts(contract, root)
+    assert terminal[0] is not None
+    assert terminal[0].identity.artifact_trajectory_id == f"{first_id}.infra-1"
+
+
+def test_sealed_phase_contract_loads_only_for_exact_frozen_inputs(tmp_path: Path) -> None:
+    pinned = _pinned(tmp_path)
+    root = tmp_path / "artifacts"
+    _run(pinned, root, _RuntimeFactory())
+
+    contract = load_matrix_phase_contract(
+        root,
+        pinned,
+        "core",
+        execution_context=_context(),
+    )
+
+    assert tuple(cell.identity.cell for cell in contract.plan.cells) == (
+        build_matrix_schedule(pinned.spec).cells_for_phase("core")
+    )
+    wrong_context = _context().model_copy(
+        update={
+            "transport": _context().transport.model_copy(
+                update={"host": "other-worker.example"}
+            )
+        }
+    )
+    with pytest.raises(MatrixStudyRunError, match="frozen study inputs"):
+        load_matrix_phase_contract(
+            root,
+            pinned,
+            "core",
+            execution_context=wrong_context,
+        )
+
+
+def test_matrix_timing_discovers_sources_from_terminal_retry_attempt(tmp_path: Path) -> None:
+    pinned = _pinned(tmp_path)
+    root = tmp_path / "artifacts"
+    first_id = build_matrix_schedule(pinned.spec).cells_for_phase("core")[0].trajectory_id
+
+    _run(pinned, root, _RuntimeFactory({first_id}))
+    with pytest.raises(MatrixStudyRunError, match="incomplete at retry attempt"):
+        resolve_terminal_contract_attempts(
+            load_matrix_phase_contract(
+                root,
+                pinned,
+                "core",
+                execution_context=_context(),
+            ),
+            root,
+        )
+    _run(pinned, root, _RuntimeFactory())
+
+    preflight = _preflight_view(pinned)
+    candidates = discover_matrix_qualified_candidates(
+        artifact_root=root,
+        pinned=pinned,
+        phase_id="core",
+        preflight=preflight,
+    )
+
+    assert len(candidates) == 2
+    assert candidates[0].identity.logical_trajectory_id == first_id
+    assert candidates[0].identity.attempt_trajectory_id == f"{first_id}.infra-1"
+    assert candidates[0].identity.attempt_index == 1
+    assert candidates[0].identity.candidate_labels == ("first", "final")
+    contract = load_matrix_phase_contract(
+        root,
+        pinned,
+        "core",
+        execution_context=_context(),
+    )
+    timing_manifest = build_matrix_timing_study_manifest(
+        pinned,
+        build_matrix_schedule(pinned.spec),
+        "core",
+        preflight=preflight,
+        contract=contract,
+        candidates=candidates,
+        timing_study_id="matrix-runner-test-core-timing",
+    )
+    assert timing_manifest.candidate_count == 2
+    assert timing_manifest.timing == FORMAL_FLOOR_TIMING
 
 
 def test_exhausted_retry_pauses_then_later_invocation_completes_other_cells(
@@ -504,6 +633,15 @@ def test_exhausted_retry_pauses_then_later_invocation_completes_other_cells(
         build_matrix_schedule(pinned.spec).cells_for_phase("core")[1].trajectory_id
     ]
     assert third.cumulative_attempts == third.cumulative_calls == 3
+    contract = load_matrix_phase_contract(
+        root,
+        pinned,
+        "core",
+        execution_context=_context(),
+    )
+    terminal = resolve_terminal_contract_attempts(contract, root)
+    assert terminal[0] is None
+    assert terminal[1] is not None
 
 
 def test_partial_attempt_fails_closed_before_runtime_creation(tmp_path: Path) -> None:

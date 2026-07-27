@@ -1,4 +1,4 @@
-"""Resume clean-process timing for qualified formal R1 candidates."""
+"""Clean-process timing primitives and the formal R1 timing wrapper."""
 
 from __future__ import annotations
 
@@ -6,12 +6,14 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Literal, TypeVar
 
 from pydantic import Field, model_validator
 
@@ -21,6 +23,7 @@ from abstrak.canary.artifacts import (
     verify_trajectory,
 )
 from abstrak.canary.contracts import (
+    IDENTIFIER_PATTERN,
     CanaryModel,
     TargetStackSpec,
     TaskPackSpec,
@@ -29,6 +32,7 @@ from abstrak.canary.contracts import (
     WorkerJob,
     WorkerResult,
 )
+from abstrak.canary.loop import WorkerExecutor
 from abstrak.canary.remote import SshWorkerExecutor
 from abstrak.canary.schedule import build_r1_schedule
 from abstrak.canary.targets import get_target_stack
@@ -41,10 +45,29 @@ DEFAULT_TIMING_STUDY_ID = "r1-a100-formal-timing-v1"
 DEFAULT_WORKER_ROOT = "/workspace/volume/lipenghui/AbstraK"
 DEFAULT_TIMING = TimingSpec()
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+QualifiedCandidate = tuple[
+    str,
+    str,
+    str,
+    Path,
+    tuple[Literal["first", "final"], ...],
+    str,
+    str,
+]
+RecordT = TypeVar("RecordT", bound=CanaryModel)
 
 
 class PostprocessTimingError(RuntimeError):
     """Raised when formal inputs or resumed timing artifacts are invalid."""
+
+
+@dataclass(frozen=True)
+class VerifiedCandidateSource:
+    """One source proven to match its sealed first/final candidate artifacts."""
+
+    candidate_labels: tuple[Literal["first", "final"], ...]
+    source: str
+    source_sha256: str
 
 
 class CandidateTimingRecord(CanaryModel):
@@ -92,13 +115,15 @@ def _load_outcome(directory: Path) -> TrajectoryOutcome:
         ) from error
 
 
-def _qualified_sources(
+def verify_qualified_candidate_sources(
     directory: Path,
     outcome: TrajectoryOutcome,
     *,
     task: TaskPackSpec,
     target: TargetStackSpec,
-) -> tuple[tuple[tuple[Literal["first", "final"], ...], str, str], ...]:
+) -> tuple[VerifiedCandidateSource, ...]:
+    """Return source text only for candidates linked to passing sealed artifacts."""
+
     by_hash: dict[str, tuple[str, list[Literal["first", "final"]]]] = {}
     for label in ("first", "final"):
         result = getattr(outcome, f"{label}_sealed_result")
@@ -152,7 +177,11 @@ def _qualified_sources(
                 raise PostprocessTimingError("one candidate hash resolved to different sources")
             existing[1].append(label)
     return tuple(
-        (tuple(labels), source, source_hash)
+        VerifiedCandidateSource(
+            candidate_labels=tuple(labels),
+            source=source,
+            source_sha256=source_hash,
+        )
         for source_hash, (source, labels) in by_hash.items()
     )
 
@@ -161,7 +190,7 @@ def discover_qualified_candidates(
     *,
     root: str | Path,
     formal_study_id: str,
-) -> tuple[tuple[str, str, str, Path, tuple[str, ...], str, str], ...]:
+) -> tuple[QualifiedCandidate, ...]:
     """Validate the frozen schedule and return unique qualified sources in its order."""
 
     schedule = build_r1_schedule()
@@ -175,7 +204,7 @@ def discover_qualified_candidates(
     if manifest_value.get("schedule_sha256") != schedule.sha256:
         raise PostprocessTimingError("formal study schedule hash does not match the registry")
 
-    candidates: list[tuple[str, str, str, Path, tuple[str, ...], str, str]] = []
+    candidates: list[QualifiedCandidate] = []
     for cell in schedule.formal:
         directory = base / cell.trajectory_id
         outcome = _load_outcome(directory)
@@ -204,7 +233,7 @@ def discover_qualified_candidates(
             raise PostprocessTimingError(
                 f"formal trajectory manifest identity mismatch: {directory}"
             )
-        for labels, source, source_hash in _qualified_sources(
+        for candidate in verify_qualified_candidate_sources(
             directory,
             outcome,
             task=task,
@@ -216,9 +245,9 @@ def discover_qualified_candidates(
                     cell.task_id,
                     cell.target_id,
                     directory,
-                    labels,
-                    source,
-                    source_hash,
+                    candidate.candidate_labels,
+                    candidate.source,
+                    candidate.source_sha256,
                 )
             )
     return tuple(candidates)
@@ -259,7 +288,7 @@ def _ensure_timing_study_manifest(
     root: str | Path,
     formal_study_id: str,
     timing_study_id: str,
-    candidates: tuple[tuple[str, str, str, Path, tuple[str, ...], str, str], ...],
+    candidates: tuple[QualifiedCandidate, ...],
     timing: TimingSpec,
     device: str,
 ) -> None:
@@ -352,16 +381,17 @@ def _ensure_timing_study_manifest(
     store.seal()
 
 
-def _load_existing(
+def _load_existing_record(
     path: Path,
     *,
+    record_type: type[RecordT],
     expected_manifest: dict[str, object] | None = None,
-) -> CandidateTimingRecord | None:
+) -> RecordT | None:
     if not path.exists():
         return None
     try:
         verify_trajectory(path)
-        record = CandidateTimingRecord.model_validate_json(
+        record = record_type.model_validate_json(
             (path / "timing-record.json").read_text(encoding="utf-8")
         )
         if expected_manifest is not None:
@@ -382,6 +412,91 @@ def _load_existing(
         raise PostprocessTimingError(
             f"existing timing artifact is invalid: {path}: {error}"
         ) from error
+
+
+def run_or_resume_candidate_timing_artifact(
+    worker: WorkerExecutor,
+    *,
+    root: str | Path,
+    timing_study_id: str,
+    timing_id: str,
+    expected_manifest: dict[str, object],
+    task: TaskPackSpec,
+    target: TargetStackSpec,
+    source: str,
+    source_sha256: str,
+    timing: TimingSpec,
+    device: str,
+    record_type: type[RecordT],
+    build_record: Callable[[TimingProtocolSummary, Path], RecordT],
+    validate_record: Callable[[RecordT], None],
+) -> tuple[RecordT, bool]:
+    """Atomically run or exactly resume one candidate's clean-process timing."""
+
+    if any(
+        re.fullmatch(IDENTIFIER_PATTERN, value) is None
+        for value in (timing_study_id, timing_id)
+    ):
+        raise PostprocessTimingError("timing study and artifact IDs must be normalized")
+    if hashlib.sha256(source.encode("utf-8")).hexdigest() != source_sha256:
+        raise PostprocessTimingError("candidate source differs from its declared hash")
+    path = Path(root).expanduser() / timing_study_id / timing_id
+    staging_path = path.with_name(f"{timing_id}.incomplete")
+    if path.exists() and staging_path.exists():
+        raise PostprocessTimingError(
+            f"final and staging timing artifacts both exist: {timing_id}"
+        )
+    existing = _load_existing_record(
+        path,
+        record_type=record_type,
+        expected_manifest=expected_manifest,
+    )
+    if existing is not None:
+        validate_record(existing)
+        return existing, True
+
+    if staging_path.exists():
+        try:
+            staged = _load_existing_record(
+                staging_path,
+                record_type=record_type,
+                expected_manifest=expected_manifest,
+            )
+        except PostprocessTimingError:
+            try:
+                verify_trajectory(staging_path)
+            except (OSError, TrajectoryArtifactError):
+                shutil.rmtree(staging_path)
+            else:
+                raise
+        else:
+            assert staged is not None
+            validate_record(staged)
+            os.replace(staging_path, path)
+            return staged, True
+
+    summary = run_timing_protocol(
+        worker,
+        task=task,
+        target=target,
+        source=source,
+        job_prefix=timing_id,
+        device=device,
+        timing=timing,
+        job_kind="sealed",
+    )
+    store = TrajectoryStore.create(
+        root,
+        timing_study_id,
+        f"{timing_id}.incomplete",
+    )
+    record = build_record(summary, path)
+    validate_record(record)
+    store.write_json("run-manifest.json", expected_manifest)
+    store.write_json("timing-record.json", record)
+    store.seal()
+    os.replace(store.run_directory, path)
+    return record, False
 
 
 def run_formal_candidate_timing(
@@ -420,94 +535,76 @@ def run_formal_candidate_timing(
             "timing": timing,
             "device": device,
         }
-        existing = _load_existing(path, expected_manifest=expected_manifest)
-        if existing is not None:
+        expected_identity = (
+            trajectory_id,
+            task_id,
+            target_id,
+            labels,
+            source_hash,
+            str(formal_directory),
+            str(path),
+            timing,
+            device,
+        )
+
+        def validate_record(
+            record: CandidateTimingRecord,
+            expected: tuple[object, ...] = expected_identity,
+            expected_path: Path = path,
+        ) -> None:
             identity = (
-                existing.trajectory_id,
-                existing.task_id,
-                existing.target_id,
-                existing.candidate_labels,
-                existing.source_sha256,
-                existing.summary.timing,
-                existing.summary.device,
-            )
-            expected = (
-                trajectory_id,
-                task_id,
-                target_id,
-                labels,
-                source_hash,
-                timing,
-                device,
+                record.trajectory_id,
+                record.task_id,
+                record.target_id,
+                record.candidate_labels,
+                record.source_sha256,
+                record.formal_artifact_directory,
+                record.artifact_directory,
+                record.summary.timing,
+                record.summary.device,
             )
             if identity != expected:
                 raise PostprocessTimingError(
-                    f"existing timing artifact does not match frozen inputs: {path}"
+                    f"existing timing artifact does not match frozen inputs: {expected_path}"
                 )
-            record = existing
-            resumed = True
-        else:
-            staging_path = path.with_name(f"{timing_id}.incomplete")
-            if staging_path.exists():
-                try:
-                    staged = _load_existing(
-                        staging_path,
-                        expected_manifest=expected_manifest,
-                    )
-                except PostprocessTimingError:
-                    shutil.rmtree(staging_path)
-                else:
-                    assert staged is not None
-                    if staged.artifact_directory != str(path):
-                        raise PostprocessTimingError(
-                            f"staged timing artifact has the wrong final path: {staging_path}"
-                        )
-                    os.replace(staging_path, path)
-                    record = staged
-                    records.append(record)
-                    print(
-                        json.dumps(
-                            {
-                                "progress": f"{index}/{len(candidates)}",
-                                "trajectory_id": trajectory_id,
-                                "labels": labels,
-                                "status": record.summary.status,
-                                "stable": record.summary.stable,
-                                "median_ms": record.summary.median_ms,
-                                "resumed": True,
-                            },
-                            sort_keys=True,
-                        ),
-                        flush=True,
-                    )
-                    continue
-            summary = run_timing_protocol(
-                worker,
-                task=get_task_pack(task_id),
-                target=get_target_stack(target_id),
-                source=source,
-                job_prefix=timing_id,
-                device=device,
-                timing=timing,
-                job_kind="sealed",
-            )
-            staging_id = f"{timing_id}.incomplete"
-            store = TrajectoryStore.create(root, timing_study_id, staging_id)
-            record = CandidateTimingRecord(
-                trajectory_id=trajectory_id,
-                task_id=task_id,
-                target_id=target_id,
-                candidate_labels=labels,
-                source_sha256=source_hash,
-                formal_artifact_directory=str(formal_directory),
-                artifact_directory=str(path),
+
+        def build_record(
+            summary: TimingProtocolSummary,
+            final_path: Path,
+            source_trajectory_id: str = trajectory_id,
+            source_task_id: str = task_id,
+            source_target_id: str = target_id,
+            source_labels: tuple[Literal["first", "final"], ...] = labels,
+            candidate_sha256: str = source_hash,
+            source_directory: Path = formal_directory,
+        ) -> CandidateTimingRecord:
+            return CandidateTimingRecord(
+                trajectory_id=source_trajectory_id,
+                task_id=source_task_id,
+                target_id=source_target_id,
+                candidate_labels=source_labels,
+                source_sha256=candidate_sha256,
+                formal_artifact_directory=str(source_directory),
+                artifact_directory=str(final_path),
                 summary=summary,
             )
-            store.write_json("run-manifest.json", expected_manifest)
-            store.write_json("timing-record.json", record)
-            store.seal()
-            os.replace(store.run_directory, path)
-            resumed = False
+
+        record, resumed = run_or_resume_candidate_timing_artifact(
+            worker,
+            root=root,
+            timing_study_id=timing_study_id,
+            timing_id=timing_id,
+            expected_manifest=expected_manifest,
+            task=get_task_pack(task_id),
+            target=get_target_stack(target_id),
+            source=source,
+            source_sha256=source_hash,
+            timing=timing,
+            device=device,
+            record_type=CandidateTimingRecord,
+            build_record=build_record,
+            validate_record=validate_record,
+        )
         records.append(record)
         print(
             json.dumps(

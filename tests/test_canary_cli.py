@@ -370,6 +370,168 @@ def test_matrix_summary_exit_code_uses_cumulative_exhausted_provider_failure() -
     assert cli._matrix_summary_exit_code(summary) == cli.EXIT_PROVIDER
 
 
+def _time_study_arguments(*extra: str, expected: int = 1) -> list[str]:
+    return [
+        "time-study",
+        "--study-spec",
+        str(CAPABILITY_STUDY),
+        "--expected-study-sha256",
+        CAPABILITY_STUDY_SHA256,
+        "--phase",
+        "core",
+        "--preflight-directory",
+        "/sealed/preflight",
+        "--expected-qualified-candidates",
+        str(expected),
+        *extra,
+    ]
+
+
+def test_time_study_live_and_count_guards_precede_remote_side_effects(
+    capsys,
+    monkeypatch,
+) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("time-study side effect occurred before its local guard")
+
+    for name in (
+        "load_study_spec",
+        "load_preflight_bundle",
+        "build_authorized_ssh_worker",
+        "run_matrix_candidate_timing",
+    ):
+        monkeypatch.setattr(cli, name, unexpected)
+
+    missing_live = cli.main(_time_study_arguments())
+    negative_count = cli.main(_time_study_arguments("--live", expected=-1))
+
+    assert missing_live == cli.EXIT_CONFIG
+    assert negative_count == cli.EXIT_CONFIG
+    error = capsys.readouterr().err
+    assert "requires --live" in error
+    assert "must be non-negative" in error
+
+
+def test_time_study_count_guard_precedes_worker_creation(capsys, monkeypatch) -> None:
+    preflight = object()
+    monkeypatch.setattr(cli, "load_preflight_bundle", lambda *args: preflight)
+    monkeypatch.setattr(
+        cli,
+        "discover_matrix_qualified_candidates",
+        lambda **kwargs: (object(),),
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_matrix_phase_contract",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("phase contract loaded after candidate count mismatch")
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_authorized_ssh_worker",
+        lambda *args: (_ for _ in ()).throw(
+            AssertionError("worker created after candidate count mismatch")
+        ),
+    )
+
+    exit_code = cli.main(_time_study_arguments("--live", expected=0))
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "discovered sealed count (1)" in capsys.readouterr().err
+
+
+def test_time_study_uses_only_preflight_worker_and_frozen_protocol(
+    capsys,
+    monkeypatch,
+) -> None:
+    revision = "a" * 40
+    preflight = SimpleNamespace(
+        execution_context=SimpleNamespace(
+            controller_revision=revision,
+        )
+    )
+    candidate = object()
+    contract = object()
+    authorization = object()
+    manifest = SimpleNamespace(
+        timing_study_id="tilelang-capability-gate-a100-v1-core-timing",
+        device="cuda:0",
+        sha256="b" * 64,
+    )
+    observed: dict[str, Any] = {}
+
+    class FakeWorker:
+        def validate_environment(self, device: str) -> None:
+            observed["validated_device"] = device
+
+    record = SimpleNamespace(
+        summary=SimpleNamespace(
+            job_prefix="timing-cell",
+            status="stable",
+            stable=True,
+            median_ms=1.0,
+        )
+    )
+    monkeypatch.setattr(cli, "load_preflight_bundle", lambda *args: preflight)
+    monkeypatch.setattr(
+        cli,
+        "discover_matrix_qualified_candidates",
+        lambda **kwargs: (candidate,),
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_matrix_phase_contract",
+        lambda *args, **kwargs: contract,
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_matrix_timing_study_manifest",
+        lambda *args, **kwargs: manifest,
+    )
+    monkeypatch.setattr(cli, "read_clean_controller_revision", lambda root: revision)
+    monkeypatch.setattr(
+        cli,
+        "runtime_authorization",
+        lambda bundle: authorization if bundle is preflight else None,
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_authorized_ssh_worker",
+        lambda value: FakeWorker() if value is authorization else None,
+    )
+    monkeypatch.setattr(
+        cli,
+        "seal_matrix_timing_study_manifest",
+        lambda root, value: observed.setdefault("sealed", (root, value)),
+    )
+
+    def run_timing(worker: object, **kwargs: Any) -> tuple[object, ...]:
+        observed["run"] = (worker, kwargs)
+        kwargs["progress"](1, 1, record, False)
+        return (record,)
+
+    monkeypatch.setattr(cli, "run_matrix_candidate_timing", run_timing)
+    monkeypatch.setattr(cli, "_emit", lambda value: observed.setdefault("summary", value))
+    for name in ("load_app_config", "load_auth_store", "ProviderClient"):
+        monkeypatch.setattr(
+            cli,
+            name,
+            lambda *args, _name=name, **kwargs: (_ for _ in ()).throw(
+                AssertionError(f"time-study accessed {_name}")
+            ),
+        )
+
+    exit_code = cli.main(_time_study_arguments("--live"))
+
+    assert exit_code == cli.EXIT_OK
+    assert observed["validated_device"] == "cuda:0"
+    assert observed["sealed"][1] is manifest
+    assert observed["run"][1]["candidates"] == (candidate,)
+    assert observed["summary"]["stable_count"] == 1
+    assert "timing-cell" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     ("cause", "expected_exit"),
     [
