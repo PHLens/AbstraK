@@ -144,34 +144,46 @@ def test_worker_health_check_emits_one_json_value_and_uses_default_device(
     assert captured.err == ""
 
 
-def test_worker_health_check_passes_worker_root_to_revision_probe(
+def test_worker_health_check_passes_checkout_roots_to_revision_probe(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    observed: list[tuple[str, str | None]] = []
+    observed: list[tuple[str, str | None, str | None]] = []
 
     def fake_health(
         device: str,
         *,
         worker_root: str | None = None,
+        kernelbench_root: str | None = None,
     ) -> dict[str, object]:
-        observed.append((device, worker_root))
+        observed.append((device, worker_root, kernelbench_root))
         return {
             "schema_version": "canary-worker-health.v1",
             "status": "healthy",
             "device": device,
             "worker_revision": "a" * 40,
+            "kernelbench_revision": "b" * 40,
         }
 
     monkeypatch.setattr(worker_module, "gpu_health", fake_health)
 
     status = worker_main(
-        ["--health-check", "--device", "cuda:1", "--worker-root", "/srv/AbstraK"]
+        [
+            "--health-check",
+            "--device",
+            "cuda:1",
+            "--worker-root",
+            "/srv/AbstraK",
+            "--kernelbench-root",
+            "/srv/KernelBench",
+        ]
     )
 
     assert status == 0
-    assert observed == [("cuda:1", "/srv/AbstraK")]
-    assert json.loads(capsys.readouterr().out)["worker_revision"] == "a" * 40
+    assert observed == [("cuda:1", "/srv/AbstraK", "/srv/KernelBench")]
+    result = json.loads(capsys.readouterr().out)
+    assert result["worker_revision"] == "a" * 40
+    assert result["kernelbench_revision"] == "b" * 40
 
 
 def test_worker_revision_requires_a_clean_checkout(tmp_path: Path) -> None:

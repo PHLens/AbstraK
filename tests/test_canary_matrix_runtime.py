@@ -96,6 +96,7 @@ def _authorization(pinned: PinnedStudySpec) -> MatrixRuntimeAuthorization:
         torch_version="2.13.0+cu126",
         cuda_version="12.6",
         driver_version="570.00",
+        kernelbench_revision="3" * 40,
         tasks=(
             RuntimeTaskAuthorization(
                 task_id="gelu-static",
@@ -360,6 +361,7 @@ def test_authorized_ssh_worker_preserves_complete_preflight_route(tmp_path: Path
     assert worker.expected_tilelang_version == "0.1.12"
     assert worker.expected_triton_version == "3.7.1"
     assert worker.expected_driver_version == "570.00"
+    assert worker.expected_kernelbench_revision == "3" * 40
     assert worker.expected_non_container_worker is True
     assert worker.matrix_worker_binding == MatrixWorkerBinding(
         worker_revision="2" * 40,

@@ -203,12 +203,15 @@ def _parse_health(stdout: str, expected_device: str) -> dict[str, object]:
         if markers is not None and non_container is not None:
             if non_container != (not markers):
                 raise ValueError("health container markers disagree with non_container_worker")
-        worker_revision = value.get("worker_revision")
-        if worker_revision is not None and (
-            not isinstance(worker_revision, str)
-            or re.fullmatch(r"[0-9a-f]{40}", worker_revision) is None
-        ):
-            raise ValueError("health worker revision must be a full lowercase Git revision")
+        for field in ("worker_revision", "kernelbench_revision"):
+            revision = value.get(field)
+            if revision is not None and (
+                not isinstance(revision, str)
+                or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+            ):
+                raise ValueError(
+                    f"health {field} must be a full lowercase Git revision"
+                )
         if (
             isinstance(health_value, bool)
             or not isinstance(health_value, int | float)
@@ -243,6 +246,7 @@ class _SubprocessExecutor:
         expected_tilelang_version: str | None,
         expected_driver_version: str | None,
         expected_non_container_worker: bool | None,
+        expected_kernelbench_revision: str | None,
     ) -> None:
         if timeout_seconds <= 0 or health_timeout_seconds <= 0:
             raise ValueError("worker and health timeouts must be positive")
@@ -264,6 +268,7 @@ class _SubprocessExecutor:
         self.expected_tilelang_version = expected_tilelang_version
         self.expected_driver_version = expected_driver_version
         self.expected_non_container_worker = expected_non_container_worker
+        self.expected_kernelbench_revision = expected_kernelbench_revision
         self._quarantined = False
         self._quarantine_error: WorkerExecutionError | None = None
         self.last_health: dict[str, object] | None = None
@@ -276,6 +281,7 @@ class _SubprocessExecutor:
                 self.expected_tilelang_version,
                 self.expected_driver_version,
                 self.expected_non_container_worker,
+                self.expected_kernelbench_revision,
             )
         )
 
@@ -427,6 +433,16 @@ class _SubprocessExecutor:
             errors.append(
                 f"expected worker revision {expected_worker_revision!r}, "
                 f"found {health.get('worker_revision')!r}"
+            )
+        if (
+            self.expected_kernelbench_revision is not None
+            and health.get("kernelbench_revision")
+            != self.expected_kernelbench_revision
+        ):
+            errors.append(
+                "expected KernelBench revision "
+                f"{self.expected_kernelbench_revision!r}, "
+                f"found {health.get('kernelbench_revision')!r}"
             )
         if errors:
             health["compatibility_error"] = "; ".join(errors)
@@ -584,6 +600,7 @@ class LocalWorkerExecutor(_SubprocessExecutor):
         expected_tilelang_version: str | None = None,
         expected_driver_version: str | None = None,
         expected_non_container_worker: bool | None = None,
+        expected_kernelbench_revision: str | None = None,
     ) -> None:
         super().__init__(
             timeout_seconds=timeout_seconds,
@@ -601,6 +618,7 @@ class LocalWorkerExecutor(_SubprocessExecutor):
             expected_tilelang_version=expected_tilelang_version,
             expected_driver_version=expected_driver_version,
             expected_non_container_worker=expected_non_container_worker,
+            expected_kernelbench_revision=expected_kernelbench_revision,
         )
         self.kernelbench_root = str(kernelbench_root)
         self.asset_root = None if asset_root is None else str(asset_root)
@@ -632,6 +650,8 @@ class LocalWorkerExecutor(_SubprocessExecutor):
         ]
         if self._extended_health_required:
             command.append("--extended-health")
+        if self.expected_kernelbench_revision is not None:
+            command.extend(("--kernelbench-root", self.kernelbench_root))
         return command
 
 
@@ -670,6 +690,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
         expected_driver_version: str | None = None,
         expected_non_container_worker: bool | None = None,
         expected_worker_revision: str | None = None,
+        expected_kernelbench_revision: str | None = None,
     ) -> None:
         super().__init__(
             timeout_seconds=timeout_seconds,
@@ -687,6 +708,7 @@ class SshWorkerExecutor(_SubprocessExecutor):
             expected_tilelang_version=expected_tilelang_version,
             expected_driver_version=expected_driver_version,
             expected_non_container_worker=expected_non_container_worker,
+            expected_kernelbench_revision=expected_kernelbench_revision,
         )
         if not host or host.startswith("-") or any(character.isspace() for character in host):
             raise ValueError("host must be one non-option SSH destination")
@@ -715,6 +737,12 @@ class SshWorkerExecutor(_SubprocessExecutor):
             r"[0-9a-f]{40}", expected_worker_revision
         ) is None:
             raise ValueError("expected_worker_revision must be a full lowercase Git revision")
+        if expected_kernelbench_revision is not None and re.fullmatch(
+            r"[0-9a-f]{40}", expected_kernelbench_revision
+        ) is None:
+            raise ValueError(
+                "expected_kernelbench_revision must be a full lowercase Git revision"
+            )
         for name, value in {
             "python_executable": python_executable,
             "pythonpath": pythonpath,
@@ -975,6 +1003,8 @@ class SshWorkerExecutor(_SubprocessExecutor):
             arguments.extend(
                 ("--worker-root", str(PurePosixPath(self.pythonpath).parent))
             )
+        if self.expected_kernelbench_revision is not None:
+            arguments.extend(("--kernelbench-root", self.kernelbench_root))
         if self._extended_health_required:
             arguments.append("--extended-health")
         return self._remote_command(

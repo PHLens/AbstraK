@@ -81,9 +81,9 @@ def run_worker_job(
     return result.verify_for_job(job)
 
 
-def _read_worker_revision(worker_root: str | Path) -> str:
+def _read_clean_revision(root: str | Path, *, label: str) -> str:
     completed = subprocess.run(
-        ["git", "-C", str(worker_root), "rev-parse", "HEAD"],
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
         check=True,
         capture_output=True,
         text=True,
@@ -91,12 +91,14 @@ def _read_worker_revision(worker_root: str | Path) -> str:
     )
     revision = completed.stdout.strip()
     if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
-        raise RuntimeError("worker checkout did not report a full lowercase Git revision")
+        raise RuntimeError(
+            f"{label} checkout did not report a full lowercase Git revision"
+        )
     status = subprocess.run(
         [
             "git",
             "-C",
-            str(worker_root),
+            str(root),
             "status",
             "--porcelain=v1",
             "--untracked-files=all",
@@ -107,8 +109,16 @@ def _read_worker_revision(worker_root: str | Path) -> str:
         timeout=5.0,
     ).stdout
     if status:
-        raise RuntimeError("worker checkout must be clean")
+        raise RuntimeError(f"{label} checkout must be clean")
     return revision
+
+
+def _read_worker_revision(worker_root: str | Path) -> str:
+    return _read_clean_revision(worker_root, label="worker")
+
+
+def _read_kernelbench_revision(kernelbench_root: str | Path) -> str:
+    return _read_clean_revision(kernelbench_root, label="KernelBench")
 
 
 def _read_driver_version() -> str:
@@ -146,6 +156,7 @@ def gpu_health(
     device: str,
     *,
     worker_root: str | Path | None = None,
+    kernelbench_root: str | Path | None = None,
     extended: bool = False,
 ) -> dict[str, object]:
     """Run a fresh-process allocation and synchronization probe."""
@@ -188,6 +199,8 @@ def gpu_health(
             result["non_container_worker"] = not markers
         if worker_root is not None:
             result["worker_revision"] = _read_worker_revision(worker_root)
+        if kernelbench_root is not None:
+            result["kernelbench_revision"] = _read_kernelbench_revision(kernelbench_root)
         return result
     except Exception as error:
         return {
@@ -218,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             health_options: dict[str, object] = {}
             if arguments.worker_root is not None:
                 health_options["worker_root"] = arguments.worker_root
+            if arguments.kernelbench_root is not None:
+                health_options["kernelbench_root"] = arguments.kernelbench_root
             if arguments.extended_health:
                 health_options["extended"] = True
             result = gpu_health(device, **health_options)

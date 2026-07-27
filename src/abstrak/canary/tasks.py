@@ -28,6 +28,8 @@ class TaskRegistryError(ValueError):
 
 R1_SCOPE = "r1"
 CAPABILITY_GATE_SCOPE = "capability-gate"
+LAUNCH_FLOOR_SCOPE = "launch-floor"
+LAUNCH_FLOOR_TASK_ID = "tilelang-launch-floor-probe"
 
 
 @dataclass(frozen=True)
@@ -622,6 +624,49 @@ _CAPABILITY_GATE_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
     }
 )
 
+_LAUNCH_FLOOR_SOURCE = PinnedAsset(
+    relative_path="tasks/tilelang_launch_floor_probe.py",
+    sha256="d72f0f459e712bb02bcb2143c2474c231d32e51642c45f7c3c7d193f2d98a8d4",
+)
+_LAUNCH_FLOOR_EXPERT = PinnedAsset(
+    relative_path="experts/tilelang_launch_floor_probe.py",
+    sha256="4491b92e9801313d148096b2cc88a05bad9454564eff5e19417bc9d9feb15eba",
+)
+_LAUNCH_FLOOR_TASK_PACKS: Mapping[str, TaskPackSpec] = MappingProxyType(
+    {
+        LAUNCH_FLOOR_TASK_ID: TaskPackSpec(
+            id=LAUNCH_FLOOR_TASK_ID,
+            specification=(
+                "Copy one contiguous FP16 value into an independent FP16 output using "
+                "one B-legal TileLang kernel. This trusted probe is not an Agent workload."
+            ),
+            source_path=_LAUNCH_FLOOR_SOURCE.relative_path,
+            source_sha256=_LAUNCH_FLOOR_SOURCE.sha256,
+            dtype="fp16",
+            reference_precision="fp32",
+            input_shapes=((1,),),
+            parameters=(
+                ("elements", 1),
+                ("threads", 128),
+                ("purpose", "tilelang-execution-floor"),
+            ),
+            atol=1e-3,
+            rtol=1e-3,
+            fallback_policy="forbid_framework_ops",
+            dev_cases=_CAPABILITY_DEV_CASES,
+            sealed_cases=_CAPABILITY_SEALED_CASES,
+        )
+    }
+)
+_LAUNCH_FLOOR_TASK_ASSETS: Mapping[str, TaskAssets] = MappingProxyType(
+    {
+        LAUNCH_FLOOR_TASK_ID: TaskAssets(
+            source=_LAUNCH_FLOOR_SOURCE,
+            oracles=MappingProxyType({"tilelang": _LAUNCH_FLOOR_EXPERT}),
+        )
+    }
+)
+
 _TASK_REGISTRIES: Mapping[str, _TaskRegistryScope] = MappingProxyType(
     {
         R1_SCOPE: _TaskRegistryScope(
@@ -631,6 +676,11 @@ _TASK_REGISTRIES: Mapping[str, _TaskRegistryScope] = MappingProxyType(
         CAPABILITY_GATE_SCOPE: _TaskRegistryScope(
             packs=_CAPABILITY_GATE_TASK_PACKS,
             assets=_CAPABILITY_GATE_TASK_ASSETS,
+            asset_root=CAPABILITY_GATE_ASSET_ROOT,
+        ),
+        LAUNCH_FLOOR_SCOPE: _TaskRegistryScope(
+            packs=_LAUNCH_FLOOR_TASK_PACKS,
+            assets=_LAUNCH_FLOOR_TASK_ASSETS,
             asset_root=CAPABILITY_GATE_ASSET_ROOT,
         ),
     }

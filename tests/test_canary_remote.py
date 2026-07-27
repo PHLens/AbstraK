@@ -67,6 +67,7 @@ def _health(
     driver_version: str | None = None,
     non_container_worker: bool | None = None,
     worker_revision: str | None = None,
+    kernelbench_revision: str | None = None,
 ) -> str:
     if status == "healthy":
         payload = {
@@ -83,6 +84,8 @@ def _health(
         }
         if worker_revision is not None:
             payload["worker_revision"] = worker_revision
+        if kernelbench_revision is not None:
+            payload["kernelbench_revision"] = kernelbench_revision
         if tilelang_version is not None:
             payload["tilelang_version"] = tilelang_version
         if driver_version is not None:
@@ -392,6 +395,7 @@ def test_explicit_environment_probe_binds_all_preflight_versions() -> None:
             tilelang_version="0.1.12",
             driver_version="570.00",
             non_container_worker=True,
+            kernelbench_revision="c" * 40,
         )
     )
     popen = PopenRecorder(health)
@@ -407,14 +411,17 @@ def test_explicit_environment_probe_binds_all_preflight_versions() -> None:
         expected_tilelang_version="0.1.12",
         expected_driver_version="570.00",
         expected_non_container_worker=True,
+        expected_kernelbench_revision="c" * 40,
     )
 
     observed = executor.validate_environment("cuda:0")
 
     assert observed["driver_version"] == "570.00"
     assert observed["non_container_worker"] is True
+    assert observed["kernelbench_revision"] == "c" * 40
     assert len(popen.calls) == 1
-    assert popen.calls[0][0][-1] == "--extended-health"
+    assert "--extended-health" in popen.calls[0][0]
+    assert popen.calls[0][0][-2:] == ["--kernelbench-root", "/worker/KernelBench"]
 
 
 def test_environment_probe_rejects_container_and_malformed_driver_evidence() -> None:
@@ -761,6 +768,12 @@ def test_ssh_matrix_binding_requires_a_full_expected_worker_revision() -> None:
             "gpu.example",
             **arguments,
             expected_worker_revision="main",
+        )
+    with pytest.raises(ValueError, match="expected_kernelbench_revision"):
+        SshWorkerExecutor(
+            "gpu.example",
+            **arguments,
+            expected_kernelbench_revision="main",
         )
     for invalid_port in (0, 65536, True):
         with pytest.raises(ValueError, match="port must be"):

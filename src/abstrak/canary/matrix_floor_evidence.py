@@ -113,7 +113,7 @@ def _validate_job(
         )
 
 
-def _validate_summary(
+def validate_gate_summary(
     record: GateRecord,
     *,
     task: TaskAssetBinding,
@@ -390,7 +390,7 @@ def _validate_timing_protocol(record: GateRecord) -> None:
         )
 
 
-def _require_passing_oracle(record: GateRecord) -> tuple[WorkerResult, ...]:
+def require_passing_oracle(record: GateRecord) -> tuple[WorkerResult, ...]:
     summary = record.summary
     if summary.status not in {"stable", "unstable"}:
         raise MatrixFloorEvidenceError(
@@ -427,7 +427,10 @@ def _require_passing_oracle(record: GateRecord) -> tuple[WorkerResult, ...]:
     return summary.results
 
 
-def _generated_code_sha256(record: GateRecord, results: tuple[WorkerResult, ...]) -> str:
+def generated_code_sha256(
+    record: GateRecord,
+    results: tuple[WorkerResult, ...],
+) -> str:
     generated: list[str] = []
     captures: list[str] = []
     sizes: list[int] = []
@@ -467,7 +470,7 @@ def _expert_correctness(
     task: TaskAssetBinding,
     artifact_sha256: str,
 ) -> ExpertCorrectnessEvidence:
-    results = _require_passing_oracle(record)
+    results = require_passing_oracle(record)
     return ExpertCorrectnessEvidence(
         artifact_sha256=artifact_sha256,
         task_id=task.task_id,
@@ -495,8 +498,8 @@ def _target_codegen(
     target: TargetAssetBinding,
     artifact_sha256: str,
 ) -> TargetCodegenEvidence:
-    results = _require_passing_oracle(record)
-    generated_code_sha256 = _generated_code_sha256(record, results)
+    results = require_passing_oracle(record)
+    generated_sha256 = generated_code_sha256(record, results)
     return TargetCodegenEvidence(
         artifact_sha256=artifact_sha256,
         task_id=task.task_id,
@@ -508,7 +511,7 @@ def _target_codegen(
         compiled=all(result.compiled for result in results),
         correct=all(result.correct for result in results),
         fallback_free=all(not result.static_errors for result in results),
-        generated_code_sha256=generated_code_sha256,
+        generated_code_sha256=generated_sha256,
     )
 
 
@@ -598,7 +601,7 @@ def derive_task_floor_records(
             expected_source = baseline.source_sha256
         if record.source_sha256 != expected_source:
             raise MatrixFloorEvidenceError(f"gate source differs from the asset manifest: {key}")
-        _validate_summary(record, task=task, target=target)
+        validate_gate_summary(record, task=task, target=target)
         records[key] = (record, artifact_sha256)
 
     expected_keys = _expected_gate_keys(assets, target_values, baseline_target_id)

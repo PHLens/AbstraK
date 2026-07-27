@@ -155,8 +155,11 @@ class CanaryAssetBinding(CanaryModel):
     """One capability canary source and the target validators it exercises."""
 
     canary_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    canary_spec_sha256: str = Field(pattern=SHA256_PATTERN)
     task_id: str = Field(pattern=IDENTIFIER_PATTERN)
     source_sha256: str = Field(pattern=SHA256_PATTERN)
+    minimum_pack_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    minimum_pack_bitmask: int = Field(ge=1)
     required_target_ids: tuple[str, ...] = Field(min_length=1)
 
     @field_validator("required_target_ids")
@@ -167,13 +170,28 @@ class CanaryAssetBinding(CanaryModel):
         return values
 
 
+class LaunchProbeAssetBinding(CanaryModel):
+    """Frozen independent TileLang invocation used to estimate launch overhead."""
+
+    task_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    task_pack_sha256: str = Field(pattern=SHA256_PATTERN)
+    reference_source_sha256: str = Field(pattern=SHA256_PATTERN)
+    source_sha256: str = Field(pattern=SHA256_PATTERN)
+    target_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    target_stack_sha256: str = Field(pattern=SHA256_PATTERN)
+    target_card_sha256: str = Field(pattern=SHA256_PATTERN)
+
+
 class AssetManifest(StudyBoundModel):
     """Content-addressed assets whose exact coverage is checked against a study."""
 
-    schema_version: Literal["abstrak-matrix-asset-manifest.v1"] = "abstrak-matrix-asset-manifest.v1"
+    schema_version: Literal["abstrak-matrix-asset-manifest.v2"] = (
+        "abstrak-matrix-asset-manifest.v2"
+    )
     tasks: tuple[TaskAssetBinding, ...] = Field(min_length=1)
     targets: tuple[TargetAssetBinding, ...] = Field(min_length=1)
     canaries: tuple[CanaryAssetBinding, ...] = ()
+    launch_probe: LaunchProbeAssetBinding | None = None
 
     @model_validator(mode="after")
     def identities_are_unique_and_references_are_internal(self) -> AssetManifest:
@@ -194,6 +212,11 @@ class AssetManifest(StudyBoundModel):
                 raise ValueError("canary references an undeclared task")
             if not set(canary.required_target_ids).issubset(target_set):
                 raise ValueError("canary references an undeclared target")
+        if (
+            self.launch_probe is not None
+            and self.launch_probe.target_id not in target_set
+        ):
+            raise ValueError("launch probe references an undeclared target")
         return self
 
     @property
@@ -204,8 +227,8 @@ class AssetManifest(StudyBoundModel):
 class EnvironmentObservation(CanaryModel):
     """Complete remote observation produced by one environment probe."""
 
-    schema_version: Literal["abstrak-matrix-environment-observation.v1"] = (
-        "abstrak-matrix-environment-observation.v1"
+    schema_version: Literal["abstrak-matrix-environment-observation.v2"] = (
+        "abstrak-matrix-environment-observation.v2"
     )
     worker_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     transport: MatrixTransportContext
@@ -217,6 +240,7 @@ class EnvironmentObservation(CanaryModel):
     torch_version: str = Field(min_length=1)
     cuda_version: str = Field(min_length=1)
     driver_version: str = Field(min_length=1)
+    kernelbench_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     cache_policy: Literal["per-job-temporary"] = "per-job-temporary"
     gpu_jobs_serial: Literal[True] = True
     generated_code_remote_only: Literal[True] = True
@@ -251,8 +275,8 @@ class EnvironmentProbeEvidence(CanaryModel):
 class EnvironmentManifest(StudyBoundModel):
     """Expected or verified worker environment bound to one matrix study."""
 
-    schema_version: Literal["abstrak-matrix-environment-manifest.v1"] = (
-        "abstrak-matrix-environment-manifest.v1"
+    schema_version: Literal["abstrak-matrix-environment-manifest.v2"] = (
+        "abstrak-matrix-environment-manifest.v2"
     )
     status: EnvironmentStatus
     controller_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
@@ -266,6 +290,7 @@ class EnvironmentManifest(StudyBoundModel):
     torch_version: str = Field(min_length=1)
     cuda_version: str = Field(min_length=1)
     driver_version: str = Field(min_length=1)
+    kernelbench_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     cache_policy: Literal["per-job-temporary"] = "per-job-temporary"
     gpu_jobs_serial: Literal[True] = True
     generated_code_remote_only: Literal[True] = True
@@ -296,6 +321,7 @@ class EnvironmentManifest(StudyBoundModel):
                 torch_version=self.torch_version,
                 cuda_version=self.cuda_version,
                 driver_version=self.driver_version,
+                kernelbench_revision=self.kernelbench_revision,
                 cache_policy=self.cache_policy,
                 gpu_jobs_serial=self.gpu_jobs_serial,
                 generated_code_remote_only=self.generated_code_remote_only,
@@ -577,12 +603,16 @@ class TaskFloorRecord(CanaryModel):
 class CapabilityTargetEvidence(CanaryModel):
     """Terminal capability-canary result for one required target validator."""
 
-    schema_version: Literal["abstrak-matrix-capability-target-evidence.v1"] = (
-        "abstrak-matrix-capability-target-evidence.v1"
+    schema_version: Literal["abstrak-matrix-capability-target-evidence.v2"] = (
+        "abstrak-matrix-capability-target-evidence.v2"
     )
     artifact_sha256: str = Field(pattern=SHA256_PATTERN)
     target_id: str = Field(pattern=IDENTIFIER_PATTERN)
     target_stack_sha256: str = Field(pattern=SHA256_PATTERN)
+    minimum_pack_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    minimum_pack_bitmask: int = Field(ge=1)
+    control_source_sha256: str = Field(pattern=SHA256_PATTERN)
+    control_artifact_sha256: str = Field(pattern=SHA256_PATTERN)
     status: TerminalEvidenceStatus
     compiled: bool
     correct: bool
@@ -628,12 +658,15 @@ class CapabilityTargetEvidence(CanaryModel):
 class CapabilityCanaryEvidence(CanaryModel):
     """Exact terminal evidence for one frozen capability-canary source."""
 
-    schema_version: Literal["abstrak-matrix-capability-canary-evidence.v1"] = (
-        "abstrak-matrix-capability-canary-evidence.v1"
+    schema_version: Literal["abstrak-matrix-capability-canary-evidence.v2"] = (
+        "abstrak-matrix-capability-canary-evidence.v2"
     )
     canary_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    canary_spec_sha256: str = Field(pattern=SHA256_PATTERN)
     task_id: str = Field(pattern=IDENTIFIER_PATTERN)
     source_sha256: str = Field(pattern=SHA256_PATTERN)
+    minimum_pack_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    minimum_pack_bitmask: int = Field(ge=1)
     status: TerminalEvidenceStatus
     targets: tuple[CapabilityTargetEvidence, ...] = Field(min_length=1)
     failure_reason: str | None = Field(default=None, min_length=1)
@@ -643,6 +676,12 @@ class CapabilityCanaryEvidence(CanaryModel):
         target_ids = tuple(item.target_id for item in self.targets)
         if len(target_ids) != len(set(target_ids)):
             raise ValueError("capability canary target IDs must be unique")
+        if any(
+            item.minimum_pack_id != self.minimum_pack_id
+            or item.minimum_pack_bitmask != self.minimum_pack_bitmask
+            for item in self.targets
+        ):
+            raise ValueError("capability target minimum packs differ from the canary")
         expected: TerminalEvidenceStatus = (
             "pass" if all(item.status == "pass" for item in self.targets) else "fail"
         )
@@ -660,42 +699,83 @@ class CapabilityCanaryEvidence(CanaryModel):
 class LaunchTimingMeasurement(CanaryModel):
     """Measured launch and task time for one task or capability canary."""
 
+    schema_version: Literal["abstrak-matrix-launch-timing-measurement.v1"] = (
+        "abstrak-matrix-launch-timing-measurement.v1"
+    )
     workload_kind: Literal["task", "canary"]
     workload_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    workload_timing_kind: Literal["baseline", "expert", "canary"]
+    target_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    workload_source_sha256: str = Field(pattern=SHA256_PATTERN)
+    workload_artifact_sha256: str = Field(pattern=SHA256_PATTERN)
+    workload_timing_summary_sha256: str = Field(pattern=SHA256_PATTERN)
+    launch_source_sha256: str = Field(pattern=SHA256_PATTERN)
+    launch_artifact_sha256: str = Field(pattern=SHA256_PATTERN)
+    launch_timing_summary_sha256: str = Field(pattern=SHA256_PATTERN)
     launch_ms: float = Field(gt=0)
     task_ms: float = Field(gt=0)
+    launch_fraction: float = Field(gt=0)
 
-    @field_validator("launch_ms", "task_ms")
+    @field_validator("launch_ms", "task_ms", "launch_fraction")
     @classmethod
     def timing_is_finite(cls, value: float) -> float:
         if not math.isfinite(value):
             raise ValueError("launch-floor timings must be finite")
         return value
 
+    @model_validator(mode="after")
+    def fraction_is_derived_from_timings(self) -> LaunchTimingMeasurement:
+        expected = self.launch_ms / self.task_ms
+        if not math.isclose(
+            self.launch_fraction,
+            expected,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("launch fraction does not match launch_ms / task_ms")
+        return self
+
 
 class LaunchFloorEvidence(CanaryModel):
-    """Terminal launch-floor assessment with the measurements used to decide it."""
+    """Terminal launch-floor decision derived from the study's effect scale."""
 
-    schema_version: Literal["abstrak-matrix-launch-floor-evidence.v1"] = (
-        "abstrak-matrix-launch-floor-evidence.v1"
+    schema_version: Literal["abstrak-matrix-launch-floor-evidence.v2"] = (
+        "abstrak-matrix-launch-floor-evidence.v2"
     )
+    launch_study_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
+    probe: LaunchProbeAssetBinding
     artifact_sha256: str = Field(pattern=SHA256_PATTERN)
+    rule: Literal["launch_ms / task_ms <= max_launch_fraction"] = (
+        "launch_ms / task_ms <= max_launch_fraction"
+    )
+    max_launch_fraction: float = Field(gt=0, lt=1)
     status: TerminalEvidenceStatus
     measurements: tuple[LaunchTimingMeasurement, ...] = ()
     failure_reason: str | None = Field(default=None, min_length=1)
 
+    @field_validator("max_launch_fraction")
+    @classmethod
+    def fraction_is_finite(cls, value: float) -> float:
+        if not math.isfinite(value):
+            raise ValueError("launch-floor fraction must be finite")
+        return value
+
     @model_validator(mode="after")
-    def terminal_status_has_measurements_or_reason(self) -> LaunchFloorEvidence:
+    def status_is_derived_from_measurements(self) -> LaunchFloorEvidence:
         identities = tuple(
             (item.workload_kind, item.workload_id) for item in self.measurements
         )
         if len(identities) != len(set(identities)):
             raise ValueError("launch-floor measurement identities must be unique")
-        if self.status == "pass":
-            if not self.measurements or self.failure_reason is not None:
-                raise ValueError("passing launch floor requires measurements and no reason")
-        elif self.failure_reason is None:
-            raise ValueError("failed launch floor requires a reason")
+        passed = bool(self.measurements) and all(
+            item.launch_fraction <= self.max_launch_fraction
+            for item in self.measurements
+        )
+        expected: TerminalEvidenceStatus = "pass" if passed else "fail"
+        if self.status != expected:
+            raise ValueError(f"launch-floor status must be {expected}")
+        if (self.status == "pass") != (self.failure_reason is None):
+            raise ValueError("failed launch floor requires exactly one failure reason")
         return self
 
     @property
@@ -706,7 +786,9 @@ class LaunchFloorEvidence(CanaryModel):
 class FloorManifest(StudyBoundModel):
     """Study-wide floor whose status is uniquely derived from its evidence."""
 
-    schema_version: Literal["abstrak-matrix-floor-manifest.v1"] = "abstrak-matrix-floor-manifest.v1"
+    schema_version: Literal["abstrak-matrix-floor-manifest.v2"] = (
+        "abstrak-matrix-floor-manifest.v2"
+    )
     status: FloorStatus
     asset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     environment_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -754,8 +836,8 @@ class FloorManifest(StudyBoundModel):
 class PreflightEvidenceClosure(CanaryModel):
     """All typed terminal evidence that makes a preflight receipt ready."""
 
-    schema_version: Literal["abstrak-matrix-preflight-evidence-closure.v1"] = (
-        "abstrak-matrix-preflight-evidence-closure.v1"
+    schema_version: Literal["abstrak-matrix-preflight-evidence-closure.v2"] = (
+        "abstrak-matrix-preflight-evidence-closure.v2"
     )
     environment_probe: EnvironmentProbeEvidence
     task_floors: tuple[VerifiedTaskFloorEvidence, ...] = Field(min_length=1)
@@ -805,8 +887,8 @@ def _build_evidence_closure(
 class PreflightReceipt(StudyBoundModel):
     """Ready-only receipt binding verified floor inputs to one execution context."""
 
-    schema_version: Literal["abstrak-matrix-preflight-receipt.v1"] = (
-        "abstrak-matrix-preflight-receipt.v1"
+    schema_version: Literal["abstrak-matrix-preflight-receipt.v2"] = (
+        "abstrak-matrix-preflight-receipt.v2"
     )
     status: Literal["ready"] = "ready"
     asset_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -825,8 +907,8 @@ class PreflightReceipt(StudyBoundModel):
 class PreflightBundle(CanaryModel):
     """The five semantic records stored in one sealed preflight directory."""
 
-    schema_version: Literal["abstrak-matrix-preflight-bundle.v1"] = (
-        "abstrak-matrix-preflight-bundle.v1"
+    schema_version: Literal["abstrak-matrix-preflight-bundle.v2"] = (
+        "abstrak-matrix-preflight-bundle.v2"
     )
     assets: AssetManifest
     environment: EnvironmentManifest
@@ -877,6 +959,7 @@ def build_asset_manifest(
     tasks: tuple[TaskAssetBinding, ...],
     targets: tuple[TargetAssetBinding, ...],
     canaries: tuple[CanaryAssetBinding, ...] = (),
+    launch_probe: LaunchProbeAssetBinding | None = None,
 ) -> AssetManifest:
     """Construct an asset manifest only when task and target coverage is exact."""
 
@@ -885,6 +968,7 @@ def build_asset_manifest(
         tasks=tasks,
         targets=targets,
         canaries=canaries,
+        launch_probe=launch_probe,
     )
     _validate_asset_coverage(manifest, pinned)
     return manifest
@@ -905,6 +989,7 @@ def build_pending_environment(
     torch_version: str,
     cuda_version: str,
     driver_version: str,
+    kernelbench_revision: str,
 ) -> EnvironmentManifest:
     """Freeze expected environment inputs without claiming that they were observed."""
 
@@ -922,6 +1007,7 @@ def build_pending_environment(
         torch_version=torch_version,
         cuda_version=cuda_version,
         driver_version=driver_version,
+        kernelbench_revision=kernelbench_revision,
     )
 
 
@@ -1059,22 +1145,58 @@ def _validate_floor_evidence(
     for evidence, canary in zip(floor.capability_canaries, assets.canaries, strict=True):
         if (
             evidence.status != "pass"
+            or evidence.canary_spec_sha256 != canary.canary_spec_sha256
             or evidence.task_id != canary.task_id
             or evidence.source_sha256 != canary.source_sha256
+            or evidence.minimum_pack_id != canary.minimum_pack_id
+            or evidence.minimum_pack_bitmask != canary.minimum_pack_bitmask
             or tuple(item.target_id for item in evidence.targets)
             != canary.required_target_ids
         ):
             raise MatrixPreflightError("capability canary evidence differs from frozen assets")
+        control_floor = next(
+            item for item in floor.tasks if item.task_id == canary.task_id
+        )
+        assert control_floor.verified_evidence is not None
         for target_evidence in evidence.targets:
+            control_codegen = next(
+                item
+                for item in control_floor.verified_evidence.target_codegen
+                if item.target_id == target_evidence.target_id
+            )
             if (
                 target_evidence.status != "pass"
                 or target_evidence.target_stack_sha256
                 != target_assets[target_evidence.target_id].target_stack_sha256
+                or target_evidence.minimum_pack_id != canary.minimum_pack_id
+                or target_evidence.minimum_pack_bitmask != canary.minimum_pack_bitmask
+                or target_evidence.control_source_sha256
+                != control_codegen.expert_source_sha256
+                or target_evidence.control_artifact_sha256
+                != control_codegen.artifact_sha256
+                or target_evidence.control_generated_code_sha256
+                != control_codegen.generated_code_sha256
             ):
                 raise MatrixPreflightError("capability target evidence differs from frozen assets")
 
     if floor.launch_floor is None or floor.launch_floor.status != "pass":
         raise MatrixPreflightError("valid floor requires passing launch-floor evidence")
+    if (
+        assets.launch_probe is None
+        or floor.launch_floor.probe != assets.launch_probe
+    ):
+        raise MatrixPreflightError(
+            "launch-floor probe identity differs from frozen assets"
+        )
+    if not math.isclose(
+        floor.launch_floor.max_launch_fraction,
+        pinned.spec.gate.metrics.latency_tie_fraction,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise MatrixPreflightError(
+            "launch-floor fraction differs from the study latency tie threshold"
+        )
     expected_launch_coverage = tuple(("task", item.task_id) for item in assets.tasks) + tuple(
         ("canary", item.canary_id) for item in assets.canaries
     )
@@ -1084,6 +1206,112 @@ def _validate_floor_evidence(
     )
     if actual_launch_coverage != expected_launch_coverage:
         raise MatrixPreflightError("launch-floor evidence does not exactly cover frozen workloads")
+    launch_bindings = {
+        (
+            item.launch_source_sha256,
+            item.launch_artifact_sha256,
+            item.launch_timing_summary_sha256,
+            item.launch_ms,
+        )
+        for item in floor.launch_floor.measurements
+    }
+    if len(launch_bindings) != 1:
+        raise MatrixPreflightError(
+            "launch-floor measurements do not share one frozen probe result"
+        )
+    if any(
+        item.launch_artifact_sha256 != floor.launch_floor.artifact_sha256
+        or item.launch_source_sha256 != floor.launch_floor.probe.source_sha256
+        for item in floor.launch_floor.measurements
+    ):
+        raise MatrixPreflightError(
+            "launch-floor measurements differ from the declared probe artifact"
+        )
+    canary_assets = {item.canary_id: item for item in assets.canaries}
+    task_floors = {item.task_id: item for item in floor.tasks}
+    canary_evidence = {
+        item.canary_id: item for item in floor.capability_canaries
+    }
+    for measurement in floor.launch_floor.measurements:
+        if measurement.target_id not in target_assets:
+            raise MatrixPreflightError("launch-floor measurement target is not frozen")
+        if measurement.workload_kind == "task":
+            task = asset_tasks[measurement.workload_id]
+            task_floor = task_floors[measurement.workload_id]
+            assert task_floor.verified_evidence is not None
+            verified = task_floor.verified_evidence
+            allowed_sources = (
+                {task.expert_source_sha256}
+                if measurement.workload_timing_kind == "expert"
+                else {item.source_sha256 for item in task.baselines}
+            )
+            if (
+                measurement.workload_timing_kind == "canary"
+                or measurement.workload_source_sha256 not in allowed_sources
+            ):
+                raise MatrixPreflightError(
+                    "launch-floor task timing differs from frozen expert/baseline assets"
+                )
+            if measurement.workload_timing_kind == "baseline":
+                selected = next(
+                    item
+                    for item in verified.baseline_timings
+                    if item.variant == verified.selected_baseline_variant
+                )
+                if (
+                    measurement.workload_source_sha256 != selected.source_sha256
+                    or measurement.workload_artifact_sha256
+                    != selected.artifact_sha256
+                    or measurement.workload_timing_summary_sha256
+                    != selected.timing_summary_sha256
+                    or selected.median_ms is None
+                    or not math.isclose(
+                        measurement.task_ms,
+                        selected.median_ms,
+                        rel_tol=1e-12,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    raise MatrixPreflightError(
+                        "launch-floor baseline denominator differs from L_i*"
+                    )
+            else:
+                control = next(
+                    item
+                    for item in verified.target_codegen
+                    if item.target_id == measurement.target_id
+                )
+                if (
+                    measurement.workload_source_sha256
+                    != control.expert_source_sha256
+                    or measurement.workload_artifact_sha256
+                    != control.artifact_sha256
+                ):
+                    raise MatrixPreflightError(
+                        "launch-floor expert denominator differs from its gate"
+                    )
+        else:
+            canary = canary_assets[measurement.workload_id]
+            evidence = canary_evidence[measurement.workload_id]
+            target_evidence = next(
+                (
+                    item
+                    for item in evidence.targets
+                    if item.target_id == measurement.target_id
+                ),
+                None,
+            )
+            if (
+                measurement.workload_timing_kind != "canary"
+                or measurement.workload_source_sha256 != canary.source_sha256
+                or measurement.target_id != canary.required_target_ids[0]
+                or target_evidence is None
+                or measurement.workload_artifact_sha256
+                != target_evidence.artifact_sha256
+            ):
+                raise MatrixPreflightError(
+                    "launch-floor canary timing differs from its minimum-pack asset"
+                )
 
 
 def _validate_preflight_inputs(

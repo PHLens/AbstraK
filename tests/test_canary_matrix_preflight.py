@@ -34,6 +34,7 @@ from abstrak.canary.matrix_preflight import (
     FloorManifest,
     LatencyCeilingDerivation,
     LaunchFloorEvidence,
+    LaunchProbeAssetBinding,
     LaunchTimingMeasurement,
     MatrixPreflightError,
     TargetAssetBinding,
@@ -152,10 +153,24 @@ def _assets(pinned: PinnedStudySpec):
         canaries=(
             CanaryAssetBinding(
                 canary_id="schedule-canary",
+                canary_spec_sha256=_digest("schedule-canary:spec"),
                 task_id="task-a",
                 source_sha256=_digest("schedule-canary:source"),
+                minimum_pack_id="tileops-full",
+                minimum_pack_bitmask=7,
                 required_target_ids=("target-full",),
             ),
+        ),
+        launch_probe=LaunchProbeAssetBinding(
+            task_id="launch-probe",
+            task_pack_sha256=_digest("launch-probe:task"),
+            reference_source_sha256=_digest("launch-probe:reference"),
+            source_sha256=_digest("launch:source"),
+            target_id="target-core",
+            target_stack_sha256=_target_asset(
+                "target-core"
+            ).target_stack_sha256,
+            target_card_sha256=_target_asset("target-core").card_sha256,
         ),
     )
 
@@ -175,6 +190,7 @@ def _pending_environment(pinned: PinnedStudySpec) -> EnvironmentManifest:
         torch_version="2.13.0",
         cuda_version="12.6",
         driver_version="570.00",
+        kernelbench_revision="3" * 40,
     )
 
 
@@ -196,6 +212,7 @@ def _verified_environment(pinned: PinnedStudySpec) -> EnvironmentManifest:
             torch_version=pending.torch_version,
             cuda_version=pending.cuda_version,
             driver_version=pending.driver_version,
+            kernelbench_revision=pending.kernelbench_revision,
         ),
     )
     return EnvironmentManifest.model_validate(payload)
@@ -276,14 +293,23 @@ def _capability_evidence(
     target_by_id = {target.target_id: target for target in targets}
     return CapabilityCanaryEvidence(
         canary_id=canary.canary_id,
+        canary_spec_sha256=canary.canary_spec_sha256,
         task_id=canary.task_id,
         source_sha256=canary.source_sha256,
+        minimum_pack_id=canary.minimum_pack_id,
+        minimum_pack_bitmask=canary.minimum_pack_bitmask,
         status="pass",
         targets=tuple(
             CapabilityTargetEvidence(
                 artifact_sha256=_digest(f"{canary.canary_id}:{target_id}:validation"),
                 target_id=target_id,
                 target_stack_sha256=target_by_id[target_id].target_stack_sha256,
+                minimum_pack_id=canary.minimum_pack_id,
+                minimum_pack_bitmask=canary.minimum_pack_bitmask,
+                control_source_sha256=_task_asset(canary.task_id).expert_source_sha256,
+                control_artifact_sha256=_digest(
+                    f"{canary.task_id}:{target_id}:validation"
+                ),
                 status="pass",
                 compiled=True,
                 correct=True,
@@ -292,7 +318,7 @@ def _capability_evidence(
                     f"{canary.canary_id}:{target_id}:capability-codegen"
                 ),
                 control_generated_code_sha256=_digest(
-                    f"{canary.canary_id}:{target_id}:control-codegen"
+                    f"{canary.task_id}:generated-cuda"
                 ),
             )
             for target_id in canary.required_target_ids
@@ -304,15 +330,56 @@ def _launch_floor(assets: AssetManifest) -> LaunchFloorEvidence:
     workloads = tuple(("task", item.task_id) for item in assets.tasks) + tuple(
         ("canary", item.canary_id) for item in assets.canaries
     )
+    canary_targets = {
+        item.canary_id: item.required_target_ids[0] for item in assets.canaries
+    }
     return LaunchFloorEvidence(
-        artifact_sha256=_digest("launch-floor-results"),
+        launch_study_manifest_sha256=_digest("launch-floor-study"),
+        probe=assets.launch_probe,
+        artifact_sha256=_digest("launch:artifact"),
+        max_launch_fraction=0.1,
         status="pass",
         measurements=tuple(
             LaunchTimingMeasurement(
                 workload_kind=kind,
                 workload_id=identifier,
+                workload_timing_kind="expert" if kind == "task" else "canary",
+                target_id=(
+                    assets.targets[0].target_id
+                    if kind == "task"
+                    else canary_targets[identifier]
+                ),
+                workload_source_sha256=(
+                    next(
+                        item.expert_source_sha256
+                        for item in assets.tasks
+                        if item.task_id == identifier
+                    )
+                    if kind == "task"
+                    else next(
+                        item.source_sha256
+                        for item in assets.canaries
+                        if item.canary_id == identifier
+                    )
+                ),
+                workload_artifact_sha256=(
+                    _digest(
+                        f"{identifier}:{assets.targets[0].target_id}:validation"
+                    )
+                    if kind == "task"
+                    else _digest(
+                        f"{identifier}:{canary_targets[identifier]}:validation"
+                    )
+                ),
+                workload_timing_summary_sha256=_digest(
+                    f"{kind}:{identifier}:timing"
+                ),
+                launch_source_sha256=_digest("launch:source"),
+                launch_artifact_sha256=_digest("launch:artifact"),
+                launch_timing_summary_sha256=_digest("launch:timing"),
                 launch_ms=0.01,
                 task_ms=1.0,
+                launch_fraction=0.01,
             )
             for kind, identifier in workloads
         ),
@@ -510,7 +577,13 @@ def test_passing_codegen_and_launch_evidence_requires_observed_results(
 
     payload = ready.floor.model_dump()
     payload["launch_floor"]["measurements"] = ()
-    with pytest.raises(ValidationError, match="passing launch floor requires measurements"):
+    with pytest.raises(ValidationError, match="launch-floor status must be fail"):
+        FloorManifest.model_validate(payload)
+
+    payload = ready.floor.model_dump()
+    payload["launch_floor"]["measurements"][0]["task_ms"] = 0.05
+    payload["launch_floor"]["measurements"][0]["launch_fraction"] = 0.2
+    with pytest.raises(ValidationError, match="launch-floor status must be fail"):
         FloorManifest.model_validate(payload)
 
 
@@ -574,8 +647,11 @@ def test_canary_references_must_resolve_inside_asset_manifest(tmp_path: Path) ->
             canaries=(
                 CanaryAssetBinding(
                     canary_id="bad-canary",
+                    canary_spec_sha256=_digest("bad-canary:spec"),
                     task_id="task-a",
                     source_sha256=_digest("bad-canary"),
+                    minimum_pack_id="tileops-full",
+                    minimum_pack_bitmask=7,
                     required_target_ids=("target-missing",),
                 ),
             ),
@@ -690,6 +766,23 @@ def test_preflight_rejects_pending_status_and_wrong_gate_factor(
             execution_context=_context(ready.assets, wrong_factor, ready.environment),
         )
 
+    payload = ready.floor.model_dump()
+    payload["launch_floor"]["max_launch_fraction"] = 0.2
+    wrong_launch_fraction = FloorManifest.model_validate(payload)
+    with pytest.raises(MatrixPreflightError, match="latency tie threshold"):
+        build_preflight_receipt(
+            ready.pinned,
+            ready.schedule,
+            assets=ready.assets,
+            floor=wrong_launch_fraction,
+            environment=ready.environment,
+            execution_context=_context(
+                ready.assets,
+                wrong_launch_fraction,
+                ready.environment,
+            ),
+        )
+
 
 @pytest.mark.parametrize(
     ("field", "message"),
@@ -747,6 +840,49 @@ def test_floor_evidence_must_cover_frozen_targets_and_baselines(ready: ReadyInpu
             floor=incomplete,
             environment=ready.environment,
             execution_context=_context(ready.assets, incomplete, ready.environment),
+        )
+
+
+def test_preflight_binds_capability_controls_and_launch_probe_assets(
+    ready: ReadyInputs,
+) -> None:
+    payload = ready.floor.model_dump()
+    payload["capability_canaries"][0]["targets"][0][
+        "control_artifact_sha256"
+    ] = _digest("forged-control-artifact")
+    forged_control = FloorManifest.model_validate(payload)
+    with pytest.raises(MatrixPreflightError, match="capability target evidence"):
+        build_preflight_receipt(
+            ready.pinned,
+            ready.schedule,
+            assets=ready.assets,
+            floor=forged_control,
+            environment=ready.environment,
+            execution_context=_context(
+                ready.assets,
+                forged_control,
+                ready.environment,
+            ),
+        )
+
+    payload = ready.floor.model_dump()
+    forged_source = _digest("forged-launch-source")
+    payload["launch_floor"]["probe"]["source_sha256"] = forged_source
+    for measurement in payload["launch_floor"]["measurements"]:
+        measurement["launch_source_sha256"] = forged_source
+    forged_probe = FloorManifest.model_validate(payload)
+    with pytest.raises(MatrixPreflightError, match="probe identity"):
+        build_preflight_receipt(
+            ready.pinned,
+            ready.schedule,
+            assets=ready.assets,
+            floor=forged_probe,
+            environment=ready.environment,
+            execution_context=_context(
+                ready.assets,
+                forged_probe,
+                ready.environment,
+            ),
         )
 
 

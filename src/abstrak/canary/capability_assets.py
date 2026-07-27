@@ -21,6 +21,7 @@ from abstrak.canary.capabilities import (
     MAP_PACK,
     SCHED_PACK,
     PackId,
+    get_capability_pack,
     validate_tilelang_capability_source,
 )
 from abstrak.canary.contracts import IDENTIFIER_PATTERN, SHA256_PATTERN, CanaryModel
@@ -30,6 +31,7 @@ from abstrak.canary.matrix_preflight import (
     AssetManifest,
     BaselineAssetBinding,
     CanaryAssetBinding,
+    LaunchProbeAssetBinding,
     TargetAssetBinding,
     TaskAssetBinding,
     build_asset_manifest,
@@ -41,6 +43,8 @@ from abstrak.canary.targets import (
 from abstrak.canary.tasks import (
     CAPABILITY_GATE_ASSET_ROOT,
     CAPABILITY_GATE_TASK_IDS,
+    LAUNCH_FLOOR_SCOPE,
+    LAUNCH_FLOOR_TASK_ID,
     PinnedAsset,
     get_task_assets,
     get_task_pack,
@@ -55,7 +59,7 @@ CAPABILITY_STUDY_ID = "tilelang-capability-gate-a100-v1"
 CAPABILITY_STUDY_SHA256 = "876b18e75d86e77c6e2e4cd47038f60719ba6108943ddc754086ea82685ecd00"
 CAPABILITY_SCHEDULE_SHA256 = "40c372285875337ebd62529d72b2dd5bc2f6d123cbb2940a93c7482d2537983e"
 CAPABILITY_ASSET_MANIFEST_SHA256 = (
-    "5309958850f2bc1b6dd9d20079ab88935965fc2b4632e3efacbbc4879ca862bb"
+    "d03ef3830463855bc6cc0202826d68edf7423a65be42bfb60e00821030084dbb"
 )
 
 
@@ -160,6 +164,7 @@ def validate_capability_asset_registry(
     """Validate every local study asset without importing a GPU runtime."""
 
     validate_task_registry(scope=CAPABILITY_GATE_SCOPE, asset_root=asset_root)
+    validate_task_registry(scope=LAUNCH_FLOOR_SCOPE, asset_root=asset_root)
     validate_target_registry(scope=CAPABILITY_GATE_SCOPE, asset_root=asset_root)
     validate_baseline_registry(scope=CAPABILITY_GATE_SCOPE)
     packs = (CORE_PACK, SCHED_PACK, MAP_PACK, FULL_PACK)
@@ -240,11 +245,26 @@ def build_capability_asset_manifest(
     canaries = tuple(
         CanaryAssetBinding(
             canary_id=canary.id,
+            canary_spec_sha256=canary.sha256,
             task_id=canary.task_id,
             source_sha256=canary.source_sha256,
+            minimum_pack_id=canary.minimum_pack_id,
+            minimum_pack_bitmask=get_capability_pack(canary.minimum_pack_id).bitmask,
             required_target_ids=canary.required_target_ids,
         )
         for canary in (get_capability_canary(canary_id) for canary_id in _CANARIES)
+    )
+    launch_task = get_task_pack(LAUNCH_FLOOR_TASK_ID)
+    launch_assets = get_task_assets(LAUNCH_FLOOR_TASK_ID)
+    launch_target = get_target_stack(CORE_PACK.target_id)
+    launch_probe = LaunchProbeAssetBinding(
+        task_id=launch_task.id,
+        task_pack_sha256=sha256_json(launch_task),
+        reference_source_sha256=launch_assets.source.sha256,
+        source_sha256=launch_assets.oracles["tilelang"].sha256,
+        target_id=launch_target.id,
+        target_stack_sha256=sha256_json(launch_target),
+        target_card_sha256=launch_target.card_sha256,
     )
     manifest = build_asset_manifest(
         pinned,
@@ -252,6 +272,7 @@ def build_capability_asset_manifest(
         tasks=tuple(tasks),
         targets=targets,
         canaries=canaries,
+        launch_probe=launch_probe,
     )
     if manifest.sha256 != CAPABILITY_ASSET_MANIFEST_SHA256:
         raise CapabilityAssetError("resolved assets differ from the frozen capability manifest")

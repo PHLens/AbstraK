@@ -39,6 +39,7 @@ class EnvironmentHealthObservation(CanaryModel):
     container_markers: tuple[str, ...]
     non_container_worker: bool
     worker_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    kernelbench_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     value: float
     compatibility_error: str | None = Field(default=None, min_length=1)
 
@@ -80,8 +81,8 @@ class EnvironmentProbeFailure(CanaryModel):
 class EnvironmentProbeArtifact(CanaryModel):
     """Raw, hashable input from which environment evidence is derived."""
 
-    schema_version: Literal["abstrak-matrix-environment-probe-artifact.v1"] = (
-        "abstrak-matrix-environment-probe-artifact.v1"
+    schema_version: Literal["abstrak-matrix-environment-probe-artifact.v2"] = (
+        "abstrak-matrix-environment-probe-artifact.v2"
     )
     expected_environment_sha256: str = Field(pattern=SHA256_PATTERN)
     controller_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
@@ -123,6 +124,7 @@ class EnvironmentProbeWorker(Protocol):
     expected_tilelang_version: str | None
     expected_driver_version: str | None
     expected_non_container_worker: bool | None
+    expected_kernelbench_revision: str | None
 
     def validate_environment(self, device: str) -> dict[str, object]: ...
 
@@ -153,6 +155,7 @@ def _expected_worker_values(environment: EnvironmentManifest) -> dict[str, objec
         "expected_tilelang_version": environment.tilelang_version,
         "expected_driver_version": environment.driver_version,
         "expected_non_container_worker": environment.non_container_worker,
+        "expected_kernelbench_revision": environment.kernelbench_revision,
     }
 
 
@@ -271,6 +274,11 @@ def _mismatch_reason(
         ("cuda_version", environment.cuda_version, health.torch_cuda_version),
         ("driver_version", environment.driver_version, health.driver_version),
         ("worker_revision", environment.worker_revision, health.worker_revision),
+        (
+            "kernelbench_revision",
+            environment.kernelbench_revision,
+            health.kernelbench_revision,
+        ),
         ("non_container_worker", environment.non_container_worker, health.non_container_worker),
         ("container_markers", (), health.container_markers),
         ("probe_value", 2.0, health.value),
@@ -354,6 +362,7 @@ def derive_environment_probe(
         torch_version=health.torch_version,
         cuda_version=health.torch_cuda_version,
         driver_version=health.driver_version,
+        kernelbench_revision=health.kernelbench_revision,
     )
     evidence = EnvironmentProbeEvidence(
         artifact_sha256=artifact.sha256,

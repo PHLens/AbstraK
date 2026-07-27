@@ -55,6 +55,7 @@ def _pending() -> EnvironmentManifest:
         torch_version="2.13.0+cu126",
         cuda_version="12.6",
         driver_version="570.00",
+        kernelbench_revision="3" * 40,
     )
 
 
@@ -74,6 +75,7 @@ def _health(**updates: object) -> dict[str, object]:
         "container_markers": [],
         "non_container_worker": True,
         "worker_revision": "2" * 40,
+        "kernelbench_revision": "3" * 40,
         "value": 2.0,
     }
     value.update(updates)
@@ -96,6 +98,7 @@ class _Worker:
         self.expected_tilelang_version = pending.tilelang_version
         self.expected_driver_version = pending.driver_version
         self.expected_non_container_worker = pending.non_container_worker
+        self.expected_kernelbench_revision = pending.kernelbench_revision
         self.health = health
         self.calls: list[str] = []
 
@@ -118,6 +121,10 @@ def test_environment_probe_is_hash_bound_and_recomputable() -> None:
     assert result.evidence.observation is not None
     assert result.evidence.observation.transport == pending.transport
     assert result.evidence.observation.worker_revision == pending.worker_revision
+    assert (
+        result.evidence.observation.kernelbench_revision
+        == pending.kernelbench_revision
+    )
     assert derive_environment_probe(pending, result.artifact) == result
 
 
@@ -224,6 +231,7 @@ def test_environment_probe_worker_binds_every_expected_input() -> None:
     assert worker.expected_tilelang_version == pending.tilelang_version
     assert worker.expected_driver_version == pending.driver_version
     assert worker.expected_non_container_worker is True
+    assert worker.expected_kernelbench_revision == pending.kernelbench_revision
 
 
 def test_environment_probe_worker_rejects_inconsistent_isolation_claims() -> None:

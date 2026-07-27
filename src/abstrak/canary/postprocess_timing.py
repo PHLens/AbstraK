@@ -387,9 +387,26 @@ def _load_existing_record(
     record_type: type[RecordT],
     expected_manifest: dict[str, object] | None = None,
 ) -> RecordT | None:
-    if not path.exists():
+    if not path.exists() and not path.is_symlink():
         return None
     try:
+        if path.is_symlink():
+            raise ValueError("timing artifact cannot be a symbolic link")
+        entries = tuple(path.rglob("*"))
+        if any(item.is_symlink() for item in entries):
+            raise ValueError("timing artifact cannot contain symbolic links")
+        files = {
+            item.relative_to(path).as_posix() for item in entries if item.is_file()
+        }
+        directories = {
+            item.relative_to(path).as_posix() for item in entries if item.is_dir()
+        }
+        if files != {
+            "run-manifest.json",
+            "timing-record.json",
+            "sha256sums.txt",
+        } or directories != {"events", "turns", "candidates", "sealed"}:
+            raise ValueError("timing artifact has unexpected files or directories")
         verify_trajectory(path)
         record = record_type.model_validate_json(
             (path / "timing-record.json").read_text(encoding="utf-8")
@@ -455,7 +472,11 @@ def run_or_resume_candidate_timing_artifact(
         validate_record(existing)
         return existing, True
 
-    if staging_path.exists():
+    if staging_path.exists() or staging_path.is_symlink():
+        if staging_path.is_symlink():
+            raise PostprocessTimingError(
+                f"staging timing artifact cannot be a symbolic link: {timing_id}"
+            )
         try:
             staged = _load_existing_record(
                 staging_path,
@@ -485,13 +506,13 @@ def run_or_resume_candidate_timing_artifact(
         timing=timing,
         job_kind="sealed",
     )
+    record = build_record(summary, path)
+    validate_record(record)
     store = TrajectoryStore.create(
         root,
         timing_study_id,
         f"{timing_id}.incomplete",
     )
-    record = build_record(summary, path)
-    validate_record(record)
     store.write_json("run-manifest.json", expected_manifest)
     store.write_json("timing-record.json", record)
     store.seal()

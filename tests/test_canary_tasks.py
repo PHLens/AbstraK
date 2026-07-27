@@ -11,6 +11,8 @@ import abstrak.canary.tasks as task_registry
 from abstrak.canary.tasks import (
     CAPABILITY_GATE_SCOPE,
     CAPABILITY_GATE_TASK_IDS,
+    LAUNCH_FLOOR_SCOPE,
+    LAUNCH_FLOOR_TASK_ID,
     R1_SCOPE,
     PinnedAsset,
     TaskRegistryError,
@@ -79,6 +81,21 @@ def test_registered_task_and_oracle_are_hash_verified() -> None:
     for task_id in list_task_ids():
         for backend in ("triton", "tilelang", "cute"):
             assert "class ModelNew" in load_oracle_source(task_id, backend)
+
+
+def test_launch_floor_probe_is_isolated_and_hash_verified() -> None:
+    validate_task_registry(scope=LAUNCH_FLOOR_SCOPE)
+
+    assert list_task_ids(scope=LAUNCH_FLOOR_SCOPE) == (LAUNCH_FLOOR_TASK_ID,)
+    task = get_task_pack(LAUNCH_FLOOR_TASK_ID)
+    source = load_task_source(LAUNCH_FLOOR_TASK_ID)
+    expert = load_oracle_source(LAUNCH_FLOOR_TASK_ID, "tilelang")
+
+    assert task.input_shapes == ((1,),)
+    assert task.parameter_map["purpose"] == "tilelang-execution-floor"
+    assert "return x.clone()" in source
+    assert "with T.Kernel(1, threads=128)" in expert
+    assert "for index in T.Parallel(1)" in expert
 
 
 def test_matmul_bias_task_pack_freezes_cases_and_semantics() -> None:

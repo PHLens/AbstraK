@@ -64,8 +64,8 @@ class RuntimeTaskAuthorization(CanaryModel):
 class MatrixRuntimeAuthorization(CanaryModel):
     """Narrow ready-only view derived from a verified preflight bundle."""
 
-    schema_version: Literal["abstrak-matrix-runtime-authorization.v1"] = (
-        "abstrak-matrix-runtime-authorization.v1"
+    schema_version: Literal["abstrak-matrix-runtime-authorization.v2"] = (
+        "abstrak-matrix-runtime-authorization.v2"
     )
     study_id: str = Field(pattern=IDENTIFIER_PATTERN)
     raw_study_sha256: str = Field(pattern=SHA256_PATTERN)
@@ -80,6 +80,7 @@ class MatrixRuntimeAuthorization(CanaryModel):
     torch_version: str = Field(min_length=1)
     cuda_version: str = Field(min_length=1)
     driver_version: str = Field(min_length=1)
+    kernelbench_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     non_container_worker: Literal[True] = True
     tasks: tuple[RuntimeTaskAuthorization, ...] = Field(min_length=1)
 
@@ -122,6 +123,7 @@ def runtime_authorization(bundle: PreflightBundle) -> MatrixRuntimeAuthorization
         torch_version=bundle.environment.torch_version,
         cuda_version=bundle.environment.cuda_version,
         driver_version=bundle.environment.driver_version,
+        kernelbench_revision=bundle.environment.kernelbench_revision,
         non_container_worker=bundle.environment.non_container_worker,
         tasks=tuple(tasks),
     )
@@ -187,6 +189,7 @@ def build_authorized_ssh_worker(
         expected_tilelang_version=authorization.tilelang_version,
         expected_triton_version=authorization.triton_version,
         expected_driver_version=authorization.driver_version,
+        expected_kernelbench_revision=authorization.kernelbench_revision,
         expected_non_container_worker=authorization.non_container_worker,
         expected_worker_revision=authorization.execution_context.worker_revision,
     )
