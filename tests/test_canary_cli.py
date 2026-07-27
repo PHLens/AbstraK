@@ -3,13 +3,22 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from abstrak.canary import cli
 from abstrak.canary.artifacts import verify_trajectory
 from abstrak.canary.contracts import CaseResult, WorkerJob, WorkerResult
 from abstrak.canary.remote import WorkerExecutionError
-from abstrak.providers.contracts import NormalizedResponse, NormalizedUsage
+from abstrak.providers.contracts import (
+    ErrorCategory,
+    NormalizedError,
+    NormalizedResponse,
+    NormalizedUsage,
+    ProviderCallError,
+)
 from abstrak.providers.manifests import ManifestBundle
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -156,6 +165,252 @@ def test_inspect_study_is_offline_and_reports_dynamic_phase_ceilings(capsys, mon
         288,
         288,
     ]
+
+
+def _run_study_arguments(*extra: str) -> list[str]:
+    return [
+        "run-study",
+        "--study-spec",
+        str(CAPABILITY_STUDY),
+        "--expected-study-sha256",
+        CAPABILITY_STUDY_SHA256,
+        "--phase",
+        "core",
+        "--preflight-directory",
+        "/sealed/preflight",
+        "--expected-operational-request-ceiling",
+        "288",
+        *extra,
+    ]
+
+
+def test_run_study_guards_precede_preflight_config_auth_and_network(capsys, monkeypatch) -> None:
+    def unexpected(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("side effect occurred before matrix live guard")
+
+    for name in (
+        "load_preflight_bundle",
+        "load_app_config",
+        "load_auth_store",
+        "ProviderClient",
+        "build_authorized_ssh_worker",
+        "run_matrix_phase",
+    ):
+        monkeypatch.setattr(cli, name, unexpected)
+
+    missing_live = cli.main(_run_study_arguments())
+    wrong_ceiling = cli.main(
+        [
+            *_run_study_arguments("--live"),
+            "--expected-operational-request-ceiling",
+            "287",
+        ]
+    )
+
+    error = capsys.readouterr().err
+    assert missing_live == cli.EXIT_CONFIG
+    assert wrong_ceiling == cli.EXIT_CONFIG
+    assert "requires --live" in error
+    assert "frozen full-phase ceiling (288)" in error
+
+
+def test_run_study_rejects_reserve_before_preflight_access(capsys, monkeypatch) -> None:
+    monkeypatch.setattr(
+        cli,
+        "load_preflight_bundle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("reserve accessed preflight before authorization")
+        ),
+    )
+    arguments = _run_study_arguments("--live")
+    arguments[arguments.index("core")] = "reserve"
+
+    exit_code = cli.main(arguments)
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "sealed core analysis authorization" in capsys.readouterr().err
+
+
+def test_run_study_rejects_wrong_study_hash_before_preflight_access(
+    capsys, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        cli,
+        "load_preflight_bundle",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("preflight accessed after study hash mismatch")
+        ),
+    )
+    arguments = _run_study_arguments("--live")
+    arguments[arguments.index(CAPABILITY_STUDY_SHA256)] = "0" * 64
+
+    exit_code = cli.main(arguments)
+
+    assert exit_code == cli.EXIT_CONFIG
+    assert "study manifest SHA-256 mismatch" in capsys.readouterr().err
+
+
+def test_run_study_dispatches_generic_runtime_without_live_factory_access(
+    capsys,
+    monkeypatch,
+    manifest_bundle: ManifestBundle,
+) -> None:
+    preflight = object()
+    authorization = object()
+    observed: dict[str, Any] = {}
+
+    class FakeConfig:
+        def bundle(self, profile: str | None = None) -> ManifestBundle:
+            observed.setdefault("profiles", []).append(profile)
+            return manifest_bundle
+
+    class FakeRuntime:
+        def __init__(self, **kwargs: Any) -> None:
+            observed["runtime"] = kwargs
+
+        def resolve_task(self, identifier: str) -> str:
+            return identifier
+
+        def resolve_target(self, identifier: str) -> str:
+            return identifier
+
+        def resolve_agent(self, identifier: str) -> str:
+            return identifier
+
+        def resolve_execution(self, cell: object) -> object:
+            return cell
+
+        def runtime_for(self, identity: object) -> object:
+            raise AssertionError(f"full resume requested a live runtime: {identity}")
+
+    def fake_run(pinned: object, phase: str, **kwargs: Any) -> SimpleNamespace:
+        observed["run"] = (pinned, phase, kwargs)
+        return SimpleNamespace(status="complete")
+
+    monkeypatch.setattr(cli, "load_preflight_bundle", lambda *args: preflight)
+    monkeypatch.setattr(
+        cli,
+        "runtime_authorization",
+        lambda bundle: authorization if bundle is preflight else None,
+    )
+    monkeypatch.setattr(cli, "load_app_config", lambda path: FakeConfig())
+    monkeypatch.setattr(cli, "MatrixStudyRuntime", FakeRuntime)
+    monkeypatch.setattr(cli, "run_matrix_phase", fake_run)
+    monkeypatch.setattr(cli, "_emit", lambda value: observed.setdefault("emitted", value))
+    monkeypatch.setattr(
+        cli,
+        "load_auth_store",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("auth was loaded")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "ProviderClient",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("provider was created")),
+    )
+    monkeypatch.setattr(
+        cli,
+        "build_authorized_ssh_worker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("SSH worker was created")),
+    )
+
+    exit_code = cli.main(_run_study_arguments("--live"))
+
+    assert capsys.readouterr().err == ""
+    assert exit_code == cli.EXIT_OK
+    assert observed["profiles"] == ["deepseek-v4-pro"]
+    runtime = observed["runtime"]
+    assert runtime["authorization"] is authorization
+    assert runtime["agent_bundles"] == {"deepseek-v4-pro": manifest_bundle}
+    assert runtime["asset_root"] == CAPABILITY_STUDY.parent
+    _, phase, run_options = observed["run"]
+    assert phase == "core"
+    assert run_options["expected_operational_request_ceiling"] == 288
+    assert run_options["preflight_directory"] == "/sealed/preflight"
+    assert observed["emitted"].status == "complete"
+
+
+def test_matrix_client_factory_loads_auth_lazily_once(monkeypatch, manifest_bundle) -> None:
+    calls: list[object] = []
+    environment = {"TEST_API_KEY": "secret"}
+
+    monkeypatch.setattr(
+        cli,
+        "load_auth_store",
+        lambda path, missing_ok: calls.append((path, missing_ok)) or object(),
+    )
+    monkeypatch.setattr(
+        cli,
+        "runtime_environment",
+        lambda auth, process: calls.append((auth, process)) or environment,
+    )
+    monkeypatch.setattr(
+        cli,
+        "ProviderClient",
+        lambda bundle, *, environment: calls.append((bundle, environment)) or object(),
+    )
+
+    factory = cli._matrix_client_factory("/tmp/auth.json")
+    assert calls == []
+
+    factory("agent-a", manifest_bundle)
+    factory("agent-b", manifest_bundle)
+
+    assert calls[0] == (Path("/tmp/auth.json"), False)
+    assert sum(item == (manifest_bundle, environment) for item in calls) == 2
+    assert len(calls) == 4
+
+
+def test_matrix_summary_exit_code_uses_cumulative_exhausted_provider_failure() -> None:
+    summary = SimpleNamespace(
+        status="incomplete_infrastructure",
+        retry_exhausted_outcome_statuses=("provider_error",),
+        records=(),
+    )
+
+    assert cli._matrix_summary_exit_code(summary) == cli.EXIT_PROVIDER
+
+
+@pytest.mark.parametrize(
+    ("cause", "expected_exit"),
+    [
+        (cli.ConfigurationError("invalid auth"), cli.EXIT_CONFIG),
+        (WorkerExecutionError("health_drift", "worker changed"), cli.EXIT_WORKER),
+        (
+            ProviderCallError(
+                NormalizedError(
+                    request_id="req-matrix-cli",
+                    attempt_id="attempt-matrix-cli",
+                    logical_request_sha256="0" * 64,
+                    provider_id="fake-provider",
+                    model_id="fake-model",
+                    category=ErrorCategory.NETWORK,
+                    provider_type="FakeNetworkError",
+                    sanitized_message="provider unavailable",
+                    retryable=True,
+                    request_submitted=False,
+                    possibly_charged=False,
+                    started_at_utc=datetime.now(timezone.utc),
+                    failed_at_utc=datetime.now(timezone.utc),
+                    elapsed_ms=1.0,
+                    sanitized_transport_request={},
+                )
+            ),
+            cli.EXIT_PROVIDER,
+        ),
+        (RuntimeError("controller failure"), cli.EXIT_ARTIFACT),
+    ],
+)
+def test_matrix_run_error_exit_code_preserves_wrapped_failure_category(
+    cause: Exception,
+    expected_exit: int,
+) -> None:
+    try:
+        raise cause
+    except Exception as error:
+        try:
+            raise cli.MatrixStudyRunError("wrapped matrix failure") from error
+        except cli.MatrixStudyRunError as wrapped:
+            assert cli._matrix_run_error_exit_code(wrapped) == expected_exit
 
 
 def test_run_cell_guards_precede_config_auth_artifacts_and_network(capsys, monkeypatch) -> None:

@@ -495,9 +495,11 @@ def test_exhausted_retry_pauses_then_later_invocation_completes_other_cells(
     assert first.status == second.status == "paused_infrastructure"
     assert second.final_plan.retry_exhausted_cells == 1
     assert second.final_plan.pending_cells == 1
+    assert second.retry_exhausted_outcome_statuses == ("provider_error",)
     assert third.status == "incomplete_infrastructure"
     assert third.final_plan.retry_exhausted_cells == 1
     assert third.final_plan.resumed_cells == 1
+    assert third.retry_exhausted_outcome_statuses == ("provider_error",)
     assert [identity.trajectory_id for identity in third_factory.identities] == [
         build_matrix_schedule(pinned.spec).cells_for_phase("core")[1].trajectory_id
     ]

@@ -20,8 +20,21 @@ from abstrak.canary.baselines import BaselineRegistryError
 from abstrak.canary.contracts import AgentBudget, TimingSpec, WorkerJob
 from abstrak.canary.gates import GateError, run_baseline_gates, run_oracle_gates
 from abstrak.canary.loop import CanaryAgentLoop
-from abstrak.canary.manifests import StudyManifestError, load_study_spec
-from abstrak.canary.matrix import MatrixSpecError, build_matrix_schedule
+from abstrak.canary.manifests import PinnedStudySpec, StudyManifestError, load_study_spec
+from abstrak.canary.matrix import MatrixSchedule, MatrixSpecError, build_matrix_schedule
+from abstrak.canary.matrix_preflight import MatrixPreflightError, load_preflight_bundle
+from abstrak.canary.matrix_runner import (
+    MatrixPhaseRunSummary,
+    MatrixStudyRunError,
+    run_matrix_phase,
+    validate_matrix_phase_guards,
+)
+from abstrak.canary.matrix_runtime import (
+    MatrixRuntimeError,
+    MatrixStudyRuntime,
+    build_authorized_ssh_worker,
+    runtime_authorization,
+)
 from abstrak.canary.protocol import build_initial_messages
 from abstrak.canary.remote import LocalWorkerExecutor, SshWorkerExecutor, WorkerExecutionError
 from abstrak.canary.report import (
@@ -64,6 +77,7 @@ from abstrak.config import (
     runtime_environment,
 )
 from abstrak.providers.client import ProviderClient, ProviderConfigurationError
+from abstrak.providers.contracts import ProviderCallError
 from abstrak.providers.manifests import (
     ManifestBundle,
     MissingEnvironmentError,
@@ -186,6 +200,36 @@ def _parser() -> argparse.ArgumentParser:
     )
     inspect_study.add_argument("--study-spec", required=True)
     inspect_study.add_argument("--expected-study-sha256")
+
+    run_study = subparsers.add_parser(
+        "run-study",
+        help="run or resume one preflight-authorized generic matrix phase",
+    )
+    run_study.add_argument("--study-spec", required=True)
+    run_study.add_argument("--expected-study-sha256", required=True)
+    run_study.add_argument("--phase", required=True)
+    run_study.add_argument("--preflight-directory", required=True)
+    run_study.add_argument("--asset-root")
+    run_study.add_argument("--artifact-root", default="artifacts/capability-gate-a100")
+    run_study.add_argument(
+        "--config",
+        help=f"user config YAML (default: ${CONFIG_ENV} or ~/.abstrak/config.yaml)",
+    )
+    run_study.add_argument(
+        "--auth",
+        help=f"credential JSON (default: ${AUTH_ENV} or ~/.abstrak/auth.json)",
+    )
+    run_study.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge billable requests and execution of generated GPU code",
+    )
+    run_study.add_argument(
+        "--expected-operational-request-ceiling",
+        type=int,
+        required=True,
+        help="must equal the frozen full-phase ceiling, including one infrastructure retry",
+    )
 
     subparsers.add_parser("worker", help="run one JSON worker job or GPU health check")
 
@@ -453,6 +497,145 @@ def _inspect_study(arguments: argparse.Namespace) -> int:
         }
     )
     return EXIT_OK
+
+
+def _guard_matrix_phase(
+    arguments: argparse.Namespace,
+    *,
+    pinned: PinnedStudySpec,
+    schedule: MatrixSchedule,
+) -> None:
+    try:
+        validate_matrix_phase_guards(
+            pinned,
+            arguments.phase,
+            live=arguments.live,
+            expected_operational_request_ceiling=(
+                arguments.expected_operational_request_ceiling
+            ),
+            schedule=schedule,
+        )
+    except MatrixStudyRunError as error:
+        raise CanaryCliError(str(error)) from error
+    gate = pinned.spec.gate
+    if gate is not None and arguments.phase == gate.reserve_phase_id:
+        raise CanaryCliError(
+            "reserve phase execution requires a sealed core analysis authorization"
+        )
+
+
+def _matrix_client_factory(auth_argument: str | None):
+    environment: dict[str, str] | None = None
+    environment_loaded = False
+
+    def create(_agent_id: str, bundle: ManifestBundle) -> ProviderClient:
+        nonlocal environment, environment_loaded
+        if not environment_loaded:
+            auth_path, configured = resolve_path(
+                auth_argument,
+                environment_name=AUTH_ENV,
+                default=default_auth_path(),
+            )
+            auth = load_auth_store(auth_path, missing_ok=not configured)
+            environment = runtime_environment(auth, os.environ)
+            environment_loaded = True
+        assert environment is not None
+        return ProviderClient(bundle, environment=environment)
+
+    return create
+
+
+def _run_study(arguments: argparse.Namespace) -> int:
+    if arguments.live is not True:
+        raise CanaryCliError(
+            "run-study requires --live because it performs billable requests and executes "
+            "generated GPU code"
+        )
+    pinned = load_study_spec(
+        arguments.study_spec,
+        expected_sha256=arguments.expected_study_sha256,
+    )
+    schedule = build_matrix_schedule(pinned.spec)
+    _guard_matrix_phase(arguments, pinned=pinned, schedule=schedule)
+
+    bundle = load_preflight_bundle(arguments.preflight_directory, pinned, schedule)
+    authorization = runtime_authorization(bundle)
+    config = load_app_config(_config_path(arguments.config))
+    agent_bundles = {
+        agent_id: config.bundle(agent_id) for agent_id in pinned.spec.agents
+    }
+    asset_root = (
+        Path(arguments.asset_root).expanduser()
+        if arguments.asset_root is not None
+        else pinned.path.parent
+    )
+    runtime = MatrixStudyRuntime(
+        pinned=pinned,
+        schedule=schedule,
+        authorization=authorization,
+        agent_bundles=agent_bundles,
+        client_factory=_matrix_client_factory(arguments.auth),
+        worker_factory=lambda: build_authorized_ssh_worker(authorization),
+        controller_root=REPOSITORY_ROOT,
+        asset_root=asset_root,
+    )
+    summary = run_matrix_phase(
+        pinned,
+        arguments.phase,
+        artifact_root=arguments.artifact_root,
+        preflight_directory=arguments.preflight_directory,
+        live=arguments.live,
+        expected_operational_request_ceiling=(
+            arguments.expected_operational_request_ceiling
+        ),
+        resolve_task=runtime.resolve_task,
+        resolve_target=runtime.resolve_target,
+        resolve_agent=runtime.resolve_agent,
+        resolve_execution=runtime.resolve_execution,
+        runtime_factory=runtime.runtime_for,
+        schedule=schedule,
+    )
+    _emit(summary)
+    return _matrix_summary_exit_code(summary)
+
+
+def _matrix_summary_exit_code(summary: MatrixPhaseRunSummary) -> int:
+    """Return a stable category even when exhausted failures predate this resume."""
+
+    if summary.status == "complete":
+        return EXIT_OK
+    if (
+        summary.status == "incomplete_infrastructure"
+        and "provider_error" in summary.retry_exhausted_outcome_statuses
+    ):
+        return EXIT_PROVIDER
+    if summary.records and summary.records[-1].outcome_status == "provider_error":
+        return EXIT_PROVIDER
+    return EXIT_WORKER
+
+
+def _matrix_run_error_exit_code(error: MatrixStudyRunError) -> int:
+    """Preserve the actionable failure category hidden by runner context wrapping."""
+
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, WorkerExecutionError):
+            return EXIT_WORKER
+        if isinstance(cause, ProviderCallError):
+            return EXIT_PROVIDER
+        if isinstance(
+            cause,
+            (
+                CanaryCliError,
+                ConfigurationError,
+                MissingEnvironmentError,
+                ProviderConfigurationError,
+                MatrixRuntimeError,
+            ),
+        ):
+            return EXIT_CONFIG
+        cause = cause.__cause__
+    return EXIT_ARTIFACT
 
 
 def _run_trusted(arguments: argparse.Namespace) -> int:
@@ -727,6 +910,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _validate(arguments)
         if arguments.command == "inspect-study":
             return _inspect_study(arguments)
+        if arguments.command == "run-study":
+            return _run_study(arguments)
         if arguments.command == "run-trusted":
             return _run_trusted(arguments)
         if arguments.command == "run-gates":
@@ -744,6 +929,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         BaselineRegistryError,
         GateError,
         AnalysisReportError,
+        MatrixPreflightError,
+        MatrixRuntimeError,
         MatrixSpecError,
         StudyManifestError,
         ValidationError,
@@ -753,6 +940,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except WorkerExecutionError as error:
         print(f"worker error: {error}", file=sys.stderr)
         return EXIT_WORKER
+    except MatrixStudyRunError as error:
+        print(f"matrix run error: {error}", file=sys.stderr)
+        return _matrix_run_error_exit_code(error)
     except TrajectoryArtifactError as error:
         print(f"artifact error: {error}", file=sys.stderr)
         return EXIT_ARTIFACT

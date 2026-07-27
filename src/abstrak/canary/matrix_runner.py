@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from abstrak.canary.matrix_preflight import PreflightBundle
 
 RunStatus = Literal["complete", "paused_infrastructure", "incomplete_infrastructure"]
+InfrastructureOutcomeStatus = Literal["provider_error", "worker_error"]
 
 
 class MatrixStudyRunError(RuntimeError):
@@ -336,6 +337,7 @@ class MatrixPhaseRunSummary(CanaryModel):
     cumulative_known_input_tokens: int = Field(ge=0)
     cumulative_known_output_tokens: int = Field(ge=0)
     cumulative_usage_complete: bool
+    retry_exhausted_outcome_statuses: tuple[InfrastructureOutcomeStatus, ...]
     records: tuple[MatrixAttemptRunRecord, ...]
 
     @model_validator(mode="after")
@@ -352,6 +354,10 @@ class MatrixPhaseRunSummary(CanaryModel):
             raise ValueError("new token totals differ from run records")
         if self.newly_usage_complete != all(record.usage_complete for record in self.records):
             raise ValueError("new usage-completeness flag differs from run records")
+        if len(self.retry_exhausted_outcome_statuses) != (
+            self.final_plan.retry_exhausted_cells
+        ):
+            raise ValueError("retry-exhausted outcomes differ from the final plan")
         actionable = self.final_plan.pending_cells + self.final_plan.retry_pending_cells
         if actionable:
             expected_status: RunStatus = "paused_infrastructure"
@@ -423,6 +429,34 @@ def _load_contract_attempts(
             if loaded is not None:
                 attempts.append(loaded)
     return tuple(attempts)
+
+
+def _retry_exhausted_outcome_statuses(
+    plan: MatrixPhasePlan,
+    attempts: tuple[ExistingCellAttempt, ...],
+) -> tuple[InfrastructureOutcomeStatus, ...]:
+    """Recover exhausted failure kinds from verified attempts across all invocations."""
+
+    attempts_by_identity = {
+        (attempt.identity.trajectory_id, attempt.identity.attempt_index): attempt
+        for attempt in attempts
+    }
+    statuses: list[InfrastructureOutcomeStatus] = []
+    for cell in plan.cells:
+        if cell.state != "retry_exhausted":
+            continue
+        attempt = attempts_by_identity.get(
+            (cell.identity.trajectory_id, cell.identity.attempt_index)
+        )
+        if attempt is None or not attempt.retryable_infrastructure:
+            raise MatrixStudyRunError(
+                "retry-exhausted phase state has no matching infrastructure failure"
+            )
+        status = attempt.outcome.status
+        if status not in {"provider_error", "worker_error"}:
+            raise MatrixStudyRunError("retry-exhausted attempt has an invalid outcome status")
+        statuses.append(status)
+    return tuple(statuses)
 
 
 def build_matrix_phase_contract(
@@ -545,7 +579,7 @@ def _run_attempt(
     return outcome, store.run_directory
 
 
-def _validated_execution_guards(
+def validate_matrix_phase_guards(
     pinned: PinnedStudySpec,
     phase_id: str,
     *,
@@ -656,7 +690,7 @@ def _run_authorized_matrix_phase(
 ) -> MatrixPhaseRunSummary:
     """Execute a phase whose preflight authorization has already been verified."""
 
-    frozen_schedule = _validated_execution_guards(
+    frozen_schedule = validate_matrix_phase_guards(
         pinned,
         phase_id,
         live=live,
@@ -764,6 +798,10 @@ def _run_authorized_matrix_phase(
         status = "incomplete_infrastructure"
     else:
         status = "complete"
+    retry_exhausted_outcomes = _retry_exhausted_outcome_statuses(
+        current_plan,
+        cumulative_attempts,
+    )
     return MatrixPhaseRunSummary(
         status=status,
         study_id=pinned.spec.study_id,
@@ -792,6 +830,7 @@ def _run_authorized_matrix_phase(
         cumulative_usage_complete=all(
             attempt.outcome.usage_complete for attempt in cumulative_attempts
         ),
+        retry_exhausted_outcome_statuses=retry_exhausted_outcomes,
         records=tuple(records),
     )
 
@@ -814,7 +853,7 @@ def run_matrix_phase(
 ) -> MatrixPhaseRunSummary:
     """Verify a sealed preflight bundle, then run every actionable phase attempt in order."""
 
-    frozen_schedule = _validated_execution_guards(
+    frozen_schedule = validate_matrix_phase_guards(
         pinned,
         phase_id,
         live=live,
