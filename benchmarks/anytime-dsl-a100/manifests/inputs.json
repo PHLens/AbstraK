@@ -1,0 +1,2677 @@
+{
+  "baselines": [
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-2-standard-matmul/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-2-standard-matmul/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-2-standard-matmul/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-8-irregular-matmul/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-8-irregular-matmul/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-8-irregular-matmul/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-40-layernorm/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-40-layernorm/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-40-layernorm/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-24-logsoftmax/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-24-logsoftmax/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-24-logsoftmax/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-93-masked-cumsum/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-93-masked-cumsum/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-93-masked-cumsum/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-97-scaled-dot-product-attention/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-97-scaled-dot-product-attention/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-97-scaled-dot-product-attention/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-85-asymmetric-depthwise-conv2d/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-85-asymmetric-depthwise-conv2d/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l1-85-asymmetric-depthwise-conv2d/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-14-gemm-divide-sum-scaling/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-14-gemm-divide-sum-scaling/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-14-gemm-divide-sum-scaling/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-99-matmul-gelu-softmax/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-99-matmul-gelu-softmax/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-99-matmul-gelu-softmax/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-1-conv2d-relu-biasadd/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-1-conv2d-relu-biasadd/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-1-conv2d-relu-biasadd/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-2-convtranspose2d-bias-clamp-scale/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-2-convtranspose2d-bias-clamp-scale/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-2-convtranspose2d-bias-clamp-scale/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-85-conv2d-groupnorm-scale-pool-clamp/eager.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9",
+      "variant": "eager"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-85-conv2d-groupnorm-scale-pool-clamp/inductor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9",
+      "variant": "inductor"
+    },
+    {
+      "applicability_observation": "pending-m9",
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/baselines/l2-85-conv2d-groupnorm-scale-pool-clamp/vendor.py",
+      "status": "pending_live_materialization",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9",
+      "variant": "vendor"
+    }
+  ],
+  "environment": {
+    "accelerator": "NVIDIA A100 80GB",
+    "candidate_max_memory_bytes": 68719476736,
+    "candidate_max_wall_seconds": 600.0,
+    "compute_capability": "8.0",
+    "cuda_bindings_version": "12.9.5",
+    "cuda_python_version": "12.9.5",
+    "cuda_runtime_version": "12.6",
+    "cute_cutlass_dsl_version": "4.6.1",
+    "gpu_jobs_serial": true,
+    "isolation_contract_sha256": "95c8741867e70f6f7a2c892e18af18bbdb5414a22fc14008e6fc622d90cd11d0",
+    "isolation_mode": "bubblewrap-distinct-processes-no-network",
+    "kernelbench_revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+    "lock_sha256": "a05c87c84d725f4d238baab4ece0263cde2b0ef92fdba4f8ac74da3bdade0f45",
+    "minimum_driver_version": "575.51.03",
+    "no_gpu_sharing": true,
+    "no_mig": true,
+    "observation_status": "pending-m9",
+    "observed_environment_sha256": null,
+    "python_version": "3.10.20",
+    "schema_version": "abstrak-anytime-environment-input.v1",
+    "tilelang_version": "0.1.12",
+    "torch_version": "2.13.0+cu126",
+    "triton_version": "3.7.1",
+    "wheelhouse_archive_sha256": "ae644076dd76cd3ed8e47931e1ca4bc044881e244024556a1cb4d05767520caf",
+    "worker_bootstrap_sha256": "bb0ef9cb80881811efe2db686c36eda24f5ef1bdceb6422ea4f2bf01a19c9a89",
+    "worker_revision_policy": "same-clean-git-commit-as-controller",
+    "worker_update_sha256": "4d80e8e897ce240002b8d2d2621ecc405ff87010140689611f9af12a839185bf"
+  },
+  "experts": [
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-2-standard-matmul/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-2-standard-matmul/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-2-standard-matmul/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-2-standard-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-8-irregular-matmul/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-8-irregular-matmul/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-8-irregular-matmul/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-8-irregular-matmul",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-40-layernorm/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-40-layernorm/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-40-layernorm/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-40-layernorm",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-24-logsoftmax/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-24-logsoftmax/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-24-logsoftmax/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-24-logsoftmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-93-masked-cumsum/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-93-masked-cumsum/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-93-masked-cumsum/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-93-masked-cumsum",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-97-scaled-dot-product-attention/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-97-scaled-dot-product-attention/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-97-scaled-dot-product-attention/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-97-scaled-dot-product-attention",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-85-asymmetric-depthwise-conv2d/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-85-asymmetric-depthwise-conv2d/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l1-85-asymmetric-depthwise-conv2d/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l1-85-asymmetric-depthwise-conv2d",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-14-gemm-divide-sum-scaling/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-14-gemm-divide-sum-scaling/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-14-gemm-divide-sum-scaling/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-14-gemm-divide-sum-scaling",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-99-matmul-gelu-softmax/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-99-matmul-gelu-softmax/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-99-matmul-gelu-softmax/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-99-matmul-gelu-softmax",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-1-conv2d-relu-biasadd/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-1-conv2d-relu-biasadd/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-1-conv2d-relu-biasadd/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-1-conv2d-relu-biasadd",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-2-convtranspose2d-bias-clamp-scale/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-2-convtranspose2d-bias-clamp-scale/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-2-convtranspose2d-bias-clamp-scale/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-85-conv2d-groupnorm-scale-pool-clamp/triton-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "triton-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-85-conv2d-groupnorm-scale-pool-clamp/tilelang-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "tilelang-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9"
+    },
+    {
+      "correctness_observation": "pending-m9",
+      "expected_source_sha256": null,
+      "formal_ready": false,
+      "source_path": "benchmarks/anytime-dsl-a100/experts/l2-85-conv2d-groupnorm-scale-pool-clamp/cute-a100.py",
+      "status": "pending_live_materialization",
+      "target_id": "cute-a100",
+      "target_launch_observation": "pending-m9",
+      "task_id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "timing_observation": "pending-m9"
+    }
+  ],
+  "floor_policy": {
+    "b_star_rule": "fastest-stable-common-baseline",
+    "max_block_cv": 0.05,
+    "max_block_spread": 0.1,
+    "minimum_timing_blocks": 3,
+    "required_baseline_variants": [
+      "eager",
+      "inductor",
+      "vendor"
+    ]
+  },
+  "schema_version": "abstrak-anytime-workload-input-manifest.v1",
+  "study_id": "anytime-dsl-a100",
+  "target_cards": [
+    {
+      "backend": "triton",
+      "balance_group": "one-vector-add-example-v1",
+      "example_count": 1,
+      "example_relation": "unrelated-to-study-workloads",
+      "example_semantics": "vector-add",
+      "source_path": "benchmarks/r1-a100/targets/triton.md",
+      "source_sha256": "7cf01f1aeb862d6eb648a56eda6c47875596c325ca940a20cba2703533b45631",
+      "target_id": "triton-a100"
+    },
+    {
+      "backend": "tilelang",
+      "balance_group": "one-vector-add-example-v1",
+      "example_count": 1,
+      "example_relation": "unrelated-to-study-workloads",
+      "example_semantics": "vector-add",
+      "source_path": "benchmarks/r1-a100/targets/tilelang.md",
+      "source_sha256": "c4788211172520d35c3fa4695ddfc532f66221642006f4d9325bab4543f33586",
+      "target_id": "tilelang-a100"
+    },
+    {
+      "backend": "cute",
+      "balance_group": "one-vector-add-example-v1",
+      "example_count": 1,
+      "example_relation": "unrelated-to-study-workloads",
+      "example_semantics": "vector-add",
+      "source_path": "benchmarks/r1-a100/targets/cute.md",
+      "source_sha256": "2419ee0373e8c86ec64581130b3c4cdcd1ba67f5468d734ea0c2eb160d9a8fed",
+      "target_id": "cute-a100"
+    }
+  ],
+  "workloads": [
+    {
+      "family": "gemm",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100101
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100102
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100111
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100112
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100113
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100114
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100121
+        }
+      },
+      "id": "l1-2-standard-matmul",
+      "inputs": [
+        {
+          "distribution": "uniform finite matrix values",
+          "dtype": "fp16",
+          "name": "a",
+          "role": "argument",
+          "shape": [
+            2048,
+            8192
+          ]
+        },
+        {
+          "distribution": "uniform finite matrix values",
+          "dtype": "fp16",
+          "name": "b",
+          "role": "argument",
+          "shape": [
+            8192,
+            4096
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 2,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/2_Standard_matrix_multiplication_.py",
+        "source_sha256": "136a33c4d598d07cd7931ef8c0eff4e683c221af6fc43c2d89b6632d3f9902a0"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        2048,
+        4096
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Compute C = A @ B for fixed row-major FP16 A[2048,8192] and B[8192,4096], returning FP16 C[2048,4096] with FP32 accumulation.",
+      "state_transfer": {
+        "candidate_state_slot": null,
+        "identical_state_required": true,
+        "initialization_seed": null,
+        "mode": "stateless",
+        "parameterized": false,
+        "reference_state_slot": null,
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": null
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": null,
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "gemm",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100201
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100202
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100211
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100212
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100213
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100214
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100221
+        }
+      },
+      "id": "l1-8-irregular-matmul",
+      "inputs": [
+        {
+          "distribution": "uniform finite matrix values",
+          "dtype": "fp16",
+          "name": "a",
+          "role": "argument",
+          "shape": [
+            8205,
+            2949
+          ]
+        },
+        {
+          "distribution": "uniform finite matrix values",
+          "dtype": "fp16",
+          "name": "b",
+          "role": "argument",
+          "shape": [
+            2949,
+            5921
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 8,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/8_Matmul_with_irregular_shapes_.py",
+        "source_sha256": "717f98e135d8c11b5005bd869b36843960de2c06151beb3d7dd6a760a987223c"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        8205,
+        5921
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Compute C = A @ B for fixed irregular FP16 A[8205,2949] and B[2949,5921], returning FP16 C[8205,5921] with FP32 accumulation.",
+      "state_transfer": {
+        "candidate_state_slot": null,
+        "identical_state_required": true,
+        "initialization_seed": null,
+        "mode": "stateless",
+        "parameterized": false,
+        "reference_state_slot": null,
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": null
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": null,
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "reduction",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100301
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100302
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100311
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100312
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100313
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100314
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100321
+        }
+      },
+      "id": "l1-40-layernorm",
+      "inputs": [
+        {
+          "distribution": "uniform finite activation values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            16,
+            64,
+            256,
+            256
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "ln_weight",
+          "role": "state",
+          "shape": [
+            64,
+            256,
+            256
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "ln_bias",
+          "role": "state",
+          "shape": [
+            64,
+            256,
+            256
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 40,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/40_LayerNorm.py",
+        "source_sha256": "8d975d7cee6946513dcfb6ba84c971e53a890f9d9c6f0a4fb828904941f25975"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        16,
+        64,
+        256,
+        256
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Apply affine LayerNorm over the final [64,256,256] dimensions of fixed FP16 x[16,64,256,256], using epsilon 1e-5 and an identical cloned weight/bias state.",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200003,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "reduction",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100401
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100402
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100411
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100412
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100413
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100414
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100421
+        }
+      },
+      "id": "l1-24-logsoftmax",
+      "inputs": [
+        {
+          "distribution": "uniform finite logits",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            4096,
+            393216
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 24,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/24_LogSoftmax.py",
+        "source_sha256": "2aa5cac0c12474ed17fad018fee6ccbb09ca7d200ece7981bb8a608200b81fb8"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        4096,
+        393216
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Compute LogSoftmax along dimension 1 for fixed FP16 x[4096,393216], returning FP16 output of the same shape with numerically stable FP32 reductions.",
+      "state_transfer": {
+        "candidate_state_slot": null,
+        "identical_state_required": true,
+        "initialization_seed": null,
+        "mode": "stateless",
+        "parameterized": false,
+        "reference_state_slot": null,
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": null
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": null,
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "scan",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100501
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100502
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100511
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100512
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100513
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100514
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100521
+        }
+      },
+      "id": "l1-93-masked-cumsum",
+      "inputs": [
+        {
+          "distribution": "uniform finite scan values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            32768,
+            32768
+          ]
+        },
+        {
+          "distribution": "deterministic boolean mask",
+          "dtype": "bool",
+          "name": "mask",
+          "role": "argument",
+          "shape": [
+            32768,
+            32768
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 93,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/93_masked_cumsum.py",
+        "source_sha256": "8b1591c5c8242968acc0677a4a1308b7a704534724782c3858b4cb0b10828769"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        32768,
+        32768
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Compute cumsum(x * mask, dim=1) for fixed FP16 x[32768,32768] and boolean mask of the same shape, returning FP16 output with FP32 scan accumulation.",
+      "state_transfer": {
+        "candidate_state_slot": null,
+        "identical_state_required": true,
+        "initialization_seed": null,
+        "mode": "stateless",
+        "parameterized": false,
+        "reference_state_slot": null,
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": null
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": null,
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "attention",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100601
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100602
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100611
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100612
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100613
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100614
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100621
+        }
+      },
+      "id": "l1-97-scaled-dot-product-attention",
+      "inputs": [
+        {
+          "distribution": "uniform finite query values",
+          "dtype": "fp16",
+          "name": "q",
+          "role": "argument",
+          "shape": [
+            32,
+            32,
+            512,
+            1024
+          ]
+        },
+        {
+          "distribution": "uniform finite key values",
+          "dtype": "fp16",
+          "name": "k",
+          "role": "argument",
+          "shape": [
+            32,
+            32,
+            512,
+            1024
+          ]
+        },
+        {
+          "distribution": "uniform finite value values",
+          "dtype": "fp16",
+          "name": "v",
+          "role": "argument",
+          "shape": [
+            32,
+            32,
+            512,
+            1024
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 97,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/97_ScaledDotProductAttention.py",
+        "source_sha256": "a07ca5135657c2ea29f7b7a66ec1815560858ad69fa88221bfc0f82bd5648091"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        32,
+        32,
+        512,
+        1024
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Compute unmasked scaled dot-product attention for fixed FP16 Q, K, and V tensors of shape [32,32,512,1024], returning FP16 output of the same shape.",
+      "state_transfer": {
+        "candidate_state_slot": null,
+        "identical_state_required": true,
+        "initialization_seed": null,
+        "mode": "stateless",
+        "parameterized": false,
+        "reference_state_slot": null,
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": null
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": null,
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "convolution",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100701
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100702
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100711
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100712
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100713
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100714
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100721
+        }
+      },
+      "id": "l1-85-asymmetric-depthwise-conv2d",
+      "inputs": [
+        {
+          "distribution": "uniform finite image values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            32,
+            128,
+            128,
+            256
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_weight",
+          "role": "state",
+          "shape": [
+            128,
+            1,
+            3,
+            7
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 1,
+        "problem_id": 85,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level1/85_conv_depthwise_2D_asymmetric_input_asymmetric_kernel.py",
+        "source_sha256": "5538e14c57c791611e5e6a663cbed1051af510257a603100a25cbebc78b7a8aa"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        32,
+        128,
+        126,
+        250
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "Apply bias-free depthwise Conv2d to fixed FP16 x[32,128,128,256] with 128 groups, kernel [3,7], unit stride, no padding, and cloned weight state.",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200007,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "gemm-fusion",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100801
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100802
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100811
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100812
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100813
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100814
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100821
+        }
+      },
+      "id": "l2-14-gemm-divide-sum-scaling",
+      "inputs": [
+        {
+          "distribution": "uniform finite activation values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            1024,
+            8192
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "weight",
+          "role": "state",
+          "shape": [
+            8192,
+            8192
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 2,
+        "problem_id": 14,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level2/14_Gemm_Divide_Sum_Scaling.py",
+        "source_sha256": "8bd6a36d6dafc8916d9b47d413f668fb7a4c25444378717a4c09f495b3891cd2"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        1024,
+        1
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "For fixed FP16 x[1024,8192] and cloned weight[8192,8192], compute x @ weight.T, divide by 2, sum dimension 1 with keepdim, then multiply by 1.5.",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200008,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "gemm-fusion",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 100901
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 100902
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 100911
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 100912
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 100913
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 100914
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 100921
+        }
+      },
+      "id": "l2-99-matmul-gelu-softmax",
+      "inputs": [
+        {
+          "distribution": "uniform finite activation values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            1024,
+            8192
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "linear_weight",
+          "role": "state",
+          "shape": [
+            8192,
+            8192
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "linear_bias",
+          "role": "state",
+          "shape": [
+            8192
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 2,
+        "problem_id": 99,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level2/99_Matmul_GELU_Softmax.py",
+        "source_sha256": "a27769675f355605c1931433193bbf36a309e050c4b27d3e6375938f22329709"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        1024,
+        8192
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "For fixed FP16 x[1024,8192] and cloned Linear(8192,8192) weight/bias, compute linear, exact GELU, then Softmax along dimension 1.",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200009,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "conv-fusion",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 101001
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 101002
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 101011
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 101012
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 101013
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 101014
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 101021
+        }
+      },
+      "id": "l2-1-conv2d-relu-biasadd",
+      "inputs": [
+        {
+          "distribution": "uniform finite image values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            128,
+            64,
+            128,
+            128
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_weight",
+          "role": "state",
+          "shape": [
+            128,
+            64,
+            3,
+            3
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_bias",
+          "role": "state",
+          "shape": [
+            128
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "broadcast_bias",
+          "role": "state",
+          "shape": [
+            128,
+            1,
+            1
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 2,
+        "problem_id": 1,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level2/1_Conv2D_ReLU_BiasAdd.py",
+        "source_sha256": "45ee3a3db038396c982207b36812086bf1b94472ebbf229c5e76c5ea0b90f89f"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        128,
+        128,
+        126,
+        126
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "For fixed FP16 x[128,64,128,128], apply cloned Conv2d(64,128,3), ReLU, and a cloned broadcast bias[128,1,1], returning FP16 [128,128,126,126].",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200010,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "conv-fusion",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 101101
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 101102
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 101111
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 101112
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 101113
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 101114
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 101121
+        }
+      },
+      "id": "l2-2-convtranspose2d-bias-clamp-scale",
+      "inputs": [
+        {
+          "distribution": "uniform finite image values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            128,
+            64,
+            128,
+            128
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_transpose_weight",
+          "role": "state",
+          "shape": [
+            64,
+            64,
+            3,
+            3
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_transpose_bias",
+          "role": "state",
+          "shape": [
+            64
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "broadcast_bias",
+          "role": "state",
+          "shape": [
+            64,
+            1,
+            1
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 2,
+        "problem_id": 2,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level2/2_ConvTranspose2d_BiasAdd_Clamp_Scaling_Clamp_Divide.py",
+        "source_sha256": "2b69e31d12d28d291fb5b56634176269ba6513e8d240fc01d6f8a7b706abc109"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        128,
+        64,
+        256,
+        256
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "For fixed FP16 x[128,64,128,128], apply cloned ConvTranspose2d(64,64,3, stride=2,padding=1,output_padding=1), broadcast bias, clamp, scale by 2, clamp, and divide by 2.",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200011,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    },
+    {
+      "family": "conv-fusion",
+      "fixed_shape_forward_only": true,
+      "generator": {
+        "copy_inputs_per_evaluation": true,
+        "dev_cases": [
+          {
+            "id": "dev-uniform",
+            "recipe": "PCG64 CPU tensors; finite uniform values in [-1,1]; boolean p=0.5",
+            "seed": 101201
+          },
+          {
+            "id": "dev-structured",
+            "recipe": "PCG64 CPU tensors; alternating signs and repeated rows; boolean stripes",
+            "seed": 101202
+          }
+        ],
+        "implementation": "controller-owned-cpu-generator-fp16.v1",
+        "schema_version": "abstrak-anytime-generator.v1",
+        "sealed_cases": [
+          {
+            "id": "sealed-boundary",
+            "recipe": "PCG64 CPU tensors; shape tails and FP16 boundary magnitudes",
+            "seed": 101211
+          },
+          {
+            "id": "sealed-cancellation",
+            "recipe": "PCG64 CPU tensors; paired signs and cancellation-sensitive values",
+            "seed": 101212
+          },
+          {
+            "id": "sealed-sparse",
+            "recipe": "PCG64 CPU tensors; deterministic zeros, sparse masks, and repeated values",
+            "seed": 101213
+          },
+          {
+            "id": "sealed-dynamic-range",
+            "recipe": "PCG64 CPU tensors; finite mixed small/large values within FP16 range",
+            "seed": 101214
+          }
+        ],
+        "sealed_visibility": "qualifier-only",
+        "timing_case": {
+          "id": "timing-selection",
+          "recipe": "PCG64 CPU tensors; finite uniform values in [-0.5,0.5]; boolean p=0.5",
+          "seed": 101221
+        }
+      },
+      "id": "l2-85-conv2d-groupnorm-scale-pool-clamp",
+      "inputs": [
+        {
+          "distribution": "uniform finite image values",
+          "dtype": "fp16",
+          "name": "x",
+          "role": "argument",
+          "shape": [
+            128,
+            8,
+            128,
+            128
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_weight",
+          "role": "state",
+          "shape": [
+            64,
+            8,
+            3,
+            3
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "conv_bias",
+          "role": "state",
+          "shape": [
+            64
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "groupnorm_weight",
+          "role": "state",
+          "shape": [
+            64
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "groupnorm_bias",
+          "role": "state",
+          "shape": [
+            64
+          ]
+        },
+        {
+          "distribution": "controller-cloned frozen state snapshot",
+          "dtype": "fp16",
+          "name": "scale",
+          "role": "state",
+          "shape": [
+            64,
+            1,
+            1
+          ]
+        }
+      ],
+      "lineage": {
+        "execution_observation": "pending-m9",
+        "level": 2,
+        "problem_id": 85,
+        "repository": "https://github.com/ScalingIntelligence/KernelBench.git",
+        "revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
+        "source_observation": "offline-byte-hash-only",
+        "source_path": "KernelBench/level2/85_Conv2d_GroupNorm_Scale_MaxPool_Clamp.py",
+        "source_sha256": "ba63b5b156a347f2f92a607c4a612e2bb1963dbcb9e7f04b3e4f0cb4a294fff3"
+      },
+      "numerical_adversaries": [
+        {
+          "id": "boundary-shape-and-range",
+          "purpose": "Exercise non-power-of-two tails and safe FP16 range boundaries.",
+          "sealed_case_id": "sealed-boundary"
+        },
+        {
+          "id": "cancellation-and-order",
+          "purpose": "Detect incorrect accumulation precision or reassociation sensitivity.",
+          "sealed_case_id": "sealed-cancellation"
+        },
+        {
+          "id": "sparse-and-repeated",
+          "purpose": "Detect mask, zero, broadcast, and repeated-value mistakes.",
+          "sealed_case_id": "sealed-sparse"
+        },
+        {
+          "id": "mixed-dynamic-range",
+          "purpose": "Detect overflow-prone or unstable reductions while inputs remain finite.",
+          "sealed_case_id": "sealed-dynamic-range"
+        }
+      ],
+      "output_shape": [
+        128,
+        64,
+        31,
+        31
+      ],
+      "precision_policy": "fp16-input-state-output-fp32-accumulation",
+      "resource_feasibility_artifact_sha256": null,
+      "resource_feasibility_status": "pending-m9",
+      "schema_version": "abstrak-anytime-workload-pack.v1",
+      "specification": "For fixed FP16 x[128,8,128,128], apply cloned Conv2d(8,64,3), GroupNorm(16), channel scale, MaxPool2d(4), and clamp to [0,1].",
+      "state_transfer": {
+        "candidate_state_slot": "frozen-state-v1",
+        "identical_state_required": true,
+        "initialization_seed": 200012,
+        "mode": "snapshot-and-clone-state-dict",
+        "parameterized": true,
+        "reference_state_slot": "frozen-state-v1",
+        "schema_version": "abstrak-anytime-state-transfer.v1",
+        "sequential_random_construction": false,
+        "state_dtype": "fp16"
+      },
+      "timing_input": {
+        "fresh_input_copy_per_trial": true,
+        "fresh_process": true,
+        "generator_case_id": "timing-selection",
+        "state_slot": "frozen-state-v1",
+        "timing_unit": "milliseconds"
+      },
+      "tolerance": {
+        "atol": 0.01,
+        "equal_nan": false,
+        "inputs_unchanged_required": true,
+        "output_dtype": "fp16",
+        "output_finite_required": true,
+        "rtol": 0.01
+      }
+    }
+  ]
+}
