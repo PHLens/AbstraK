@@ -259,7 +259,7 @@ class AnytimeResourceSnapshot(AnytimeModel):
     def elapsed_values_are_finite(cls, value: float) -> float:
         if not math.isfinite(value):
             raise ValueError("elapsed resources must be finite")
-        return value
+        return 0.0 if value == 0.0 else value
 
     @model_validator(mode="after")
     def counts_are_coherent(self) -> AnytimeResourceSnapshot:

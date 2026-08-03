@@ -196,6 +196,13 @@ live loop. The ledger records:
 
 The context builder has one canonical ordering and truncation rule. A verifier reconstructs every turn
 request from earlier ledger records instead of checking only the initial-message prefix.
+At this pure-ledger boundary, provider and candidate observations are explicit trust inputs. M4 must
+load their persisted response/evaluator artifacts, derive the observation fields, verify content
+digests and cross-bind them before sealing; ledger self-consistency alone is not evidence that a
+caller-reported observation is true.
+Per-call time limits are inclusive: an observation exactly at its limit is recordable and does not by
+itself exhaust the trajectory, while an observed overrun is preserved and makes that turn terminal.
+Submitted provider errors retain their independent terminal policy.
 
 Verification:
 
@@ -216,6 +223,8 @@ Create new anytime attempt artifacts with:
 - explicit `request_submitted` and `possibly_charged` state;
 - one bounded infrastructure retry stored as a separate attempt, never an overwrite;
 - incremental phase index for efficient resume, followed by a full checksum audit at phase close;
+- artifact-aware projection that derives ledger provider/candidate observations from revalidated M2
+  response/error and evaluator artifacts, rejecting independently edited hashes, usage or outcomes;
 - derived-analysis index generation that cannot mutate source artifacts.
 
 Verification:
