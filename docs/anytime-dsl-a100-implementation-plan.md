@@ -26,18 +26,25 @@ documentation, compiler maturity, primitives, and model familiarity.
 
 ## Frozen Study Shape
 
-The intended full study contains two independently analyzed cohorts:
+The intended full study contains three independently scheduled cohorts. The two DeepSeek cohorts are
+combined only for the preregistered primary analysis; keeping the conditional reserve separate makes
+it impossible to schedule reserve cells before the core continuation decision:
 
 | Cohort | Agent | Workloads | Targets | Replicates | Calls | Trajectories | Call ceiling |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Primary | `deepseek-v4-flash` | 12 | 3 | 4 | 12 | 144 | 1,728 |
-| Robustness | `gpt-5.6-luna` | 6 | 3 | 3 | 12 | 54 | 648 |
+| DeepSeek core | `deepseek-v4-flash` | 6 | 3 | 4 | 12 | 72 | 864 |
+| GPT core | `gpt-5.6-luna` | 6 | 3 | 3 | 12 | 54 | 648 |
+| DeepSeek reserve | `deepseek-v4-flash` | 6 | 3 | 4 | 12 | 72 | 864 |
 | Total | separate analyses | - | - | - | - | 198 | 2,376 |
 
 `2,376` is the scientific model-call ceiling, not the trajectory count. Infrastructure attempts are
-stored separately and have their own operational ceiling. Each provider uses its native protocol and
-native `xhigh` reasoning setting; the two providers' reasoning effort and token counts are not treated
-as equivalent compute.
+stored separately and have their own operational ceiling. Both Agents request `xhigh`, as required by
+the study design, but requested and effective reasoning modes are recorded separately. GPT's native
+Responses request renders `reasoning={"effort":"xhigh"}`. LiteLLM 1.92 currently maps DeepSeek's
+`reasoning_effort="xhigh"` to the binary `thinking={"type":"enabled"}` mode instead of preserving
+the literal effort. That mapping is not accepted as wire-level `xhigh`: the DeepSeek formal profile
+remains blocked until an endpoint or adapter passes the M9 literal-`xhigh` conformance gate. The two
+providers' reasoning effort and token counts are never treated as equivalent compute.
 
 The full study is conditional. A non-scoring four-workload shakeout must pass before either formal
 cohort is authorized. After the shared six-workload formal core, the remaining six primary workloads
@@ -116,7 +123,8 @@ Commit: `docs: add anytime DSL A100 implementation plan`
 Implement strict frozen models under `abstrak.anytime` for:
 
 - agent identity and native protocol selection;
-- per-agent generation settings, including required `xhigh` and optional sampling parameters;
+- per-agent generation settings, including requested `xhigh`, expected effective reasoning mode,
+  conformance requirement, and optional sampling parameters;
 - fixed-call loop/context policy;
 - multi-axis resource budget and infrastructure-attempt policy;
 - checkpoint identities and resource snapshots;
@@ -142,11 +150,12 @@ Add a versioned provider client boundary that supports:
 - DeepSeek through native Chat Completions;
 - GPT through native Responses;
 - exactly one non-streaming request with no tools, cache, fallback, router, or implicit retry;
-- protocol-specific output-token and `xhigh` parameter rendering;
+- protocol-specific output-token and requested/effective reasoning parameter rendering;
 - normalized text, request/response ID, returned model, finish/status, input/cached/output/reasoning
   tokens, elapsed time, sanitized request, and raw SDK response;
-- offline conformance checks that fail when `xhigh` is omitted or changed while rendering the
-  sanitized wire request. Real endpoint acceptance remains pending until M9.
+- offline conformance checks that fail when `xhigh` is omitted or silently changed while rendering
+  the sanitized request. A known SDK translation is recorded as an explicit non-conformance, not
+  relabeled as `xhigh`; real endpoint acceptance remains pending until M9.
 
 Temperature and top-p are not inserted by a common runtime normalizer. Omitted values remain omitted.
 Responses requests do not use `previous_response_id` and request `store=false` where supported.
@@ -299,8 +308,10 @@ Commit: `test: freeze anytime DSL offline study infrastructure`
 This milestone requires a new explicit authorization because it connects to the GPU worker, performs
 billable provider requests, and executes generated GPU code. First observe and hash the worker
 environment, then run all trusted expert, baseline and target-launch gates to construct the real
-per-target floor and `B*`. Only after that floor is valid may provider-native `xhigh` conformance and
-the non-scoring 192-call shakeout run.
+per-target floor and `B*`. Only after that floor is valid may provider-native literal-`xhigh`
+conformance and the non-scoring 192-call shakeout run. If either model cannot satisfy the frozen
+reasoning contract, no formal request for that model is authorized; changing the condition to
+`thinking-enabled` requires a study amendment rather than an implicit runtime fallback.
 
 The shakeout passes only if each retained target produces stable correct Agent candidates in at least
 two workloads from two different workload families, infrastructure censoring remains below the frozen
