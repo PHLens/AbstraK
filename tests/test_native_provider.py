@@ -19,14 +19,17 @@ from abstrak.providers.contracts import (
     MessageRole,
     sha256_json,
 )
-from abstrak.providers.native_client import NativeProviderClient
+from abstrak.providers.native_client import (
+    NativeArtifactSecretError,
+    NativeProviderClient,
+)
 from abstrak.providers.native_conformance import evaluate_native_dependency_conformance
 from abstrak.providers.native_contracts import (
     NativeAgentBindingError,
     NativeClientIdentity,
     NativeConformanceCheck,
     NativeDependencyConformance,
-    NativeFormalReadinessError,
+    NativeDependencyReadinessError,
     NativeManifestBundle,
     NativeModelManifest,
     NativeNormalizedError,
@@ -63,6 +66,11 @@ class ScriptedNativeTransport:
 
     def responses(self, **kwargs: Any) -> Any:
         return self._call("responses", kwargs)
+
+
+class FalsyScriptedNativeTransport(ScriptedNativeTransport):
+    def __bool__(self) -> bool:
+        return False
 
 
 class SDKResponse(dict):
@@ -188,6 +196,53 @@ def _anytime_agent(bundle: NativeManifestBundle) -> AnytimeAgentSpec:
     )
 
 
+def _literal_chat_conformance(
+    bundle: NativeManifestBundle,
+) -> NativeDependencyConformance:
+    reasoning = NativeReasoningRecord(
+        submitted_parameter="reasoning_effort",
+        submitted_value="xhigh",
+        effective_mode="literal_xhigh",
+        fidelity="literal",
+        evidence="scripted future adapter preserves literal xhigh",
+    )
+    return NativeDependencyConformance(
+        evaluator_version="native-dependency-evaluator.v1",
+        status="pass",
+        dependency_ready=True,
+        study_ready=False,
+        study_readiness="pending_endpoint_conformance",
+        protocol="chat_completions",
+        provider_manifest_sha256=bundle.provider_sha256,
+        model_manifest_sha256=bundle.model_sha256,
+        expected_litellm_version="1.92.0",
+        observed_litellm_version="1.92.0",
+        reasoning=reasoning,
+        checks=(
+            NativeConformanceCheck(
+                name="litellm_version",
+                status="pass",
+                detail="pinned fixture version",
+            ),
+            NativeConformanceCheck(
+                name="native_chat_entrypoint",
+                status="pass",
+                detail="scripted fixture entrypoint",
+            ),
+            NativeConformanceCheck(
+                name="generation_parameters_preserved",
+                status="pass",
+                detail="scripted fixture parameters",
+            ),
+            NativeConformanceCheck(
+                name="literal_xhigh_preserved",
+                status="pass",
+                detail="offline fixture only",
+            ),
+        ),
+    )
+
+
 def test_anytime_native_manifests_are_separate_and_protocol_strict() -> None:
     bundle = _responses_bundle()
 
@@ -221,7 +276,12 @@ def test_dependency_conformance_preserves_gpt_xhigh_and_blocks_deepseek_collapse
     deepseek = evaluate_native_dependency_conformance(_deepseek_bundle())
 
     assert gpt.status == "pass"
-    assert gpt.formal_ready is True
+    assert gpt.dependency_ready is True
+    assert gpt.study_ready is False
+    assert gpt.study_readiness == "pending_endpoint_conformance"
+    assert gpt.evaluator_version == "native-dependency-evaluator.v1"
+    assert gpt.expected_litellm_version == "1.92.0"
+    assert gpt.observed_litellm_version == "1.92.0"
     assert gpt.provider_manifest_sha256 == _responses_bundle().provider_sha256
     assert gpt.model_manifest_sha256 == _responses_bundle().model_sha256
     assert gpt.reasoning.effective_mode == "literal_xhigh"
@@ -235,13 +295,41 @@ def test_dependency_conformance_preserves_gpt_xhigh_and_blocks_deepseek_collapse
     }
 
     assert deepseek.status == "fail"
-    assert deepseek.formal_ready is False
+    assert deepseek.dependency_ready is False
+    assert deepseek.study_ready is False
+    assert deepseek.study_readiness == "dependency_blocked"
     assert deepseek.reasoning.requested_effort == "xhigh"
     assert deepseek.reasoning.effective_mode == "thinking_enabled"
     assert deepseek.reasoning.fidelity == "collapsed"
     fidelity = next(check for check in deepseek.checks if check.name == "literal_xhigh_preserved")
     assert fidelity.status == "fail"
-    assert "formal blocked" in fidelity.detail
+    assert "dependency blocked" in fidelity.detail
+
+
+def test_dependency_conformance_rejects_fabricated_or_incomplete_passing_shapes() -> None:
+    valid = evaluate_native_dependency_conformance(_responses_bundle())
+
+    missing_evaluator = valid.model_dump(mode="python")
+    missing_evaluator.pop("evaluator_version")
+    with pytest.raises(ValidationError):
+        NativeDependencyConformance.model_validate(missing_evaluator)
+
+    wrong_version = valid.model_dump(mode="python")
+    wrong_version["observed_litellm_version"] = "0.0.0"
+    with pytest.raises(ValidationError, match="version check conflicts"):
+        NativeDependencyConformance.model_validate(wrong_version)
+
+    duplicate_checks = valid.model_dump(mode="python")
+    checks = list(duplicate_checks["checks"])
+    checks[-1] = checks[0]
+    duplicate_checks["checks"] = tuple(checks)
+    with pytest.raises(ValidationError, match="exactly match"):
+        NativeDependencyConformance.model_validate(duplicate_checks)
+
+    false_study_authorization = valid.model_dump(mode="python")
+    false_study_authorization["study_ready"] = True
+    with pytest.raises(ValidationError):
+        NativeDependencyConformance.model_validate(false_study_authorization)
 
 
 def test_m1_agent_binding_matches_every_runtime_generation_field() -> None:
@@ -269,6 +357,22 @@ def test_m1_agent_binding_matches_every_runtime_generation_field() -> None:
     assert transport.call_count == 0
 
 
+def test_m1_agent_binds_provider_manifest_id_not_litellm_backend_name() -> None:
+    original = _responses_bundle()
+    provider = original.provider.model_copy(update={"id": "openai-prod"})
+    model = original.model.model_copy(update={"provider": provider.id})
+    bundle = NativeManifestBundle(provider=provider, model=model)
+    agent = _anytime_agent(bundle)
+
+    validate_anytime_agent_binding(agent, bundle)
+
+    with pytest.raises(NativeAgentBindingError, match="provider_id"):
+        validate_anytime_agent_binding(
+            agent.model_copy(update={"provider_id": "openai"}),
+            bundle,
+        )
+
+
 def test_responses_request_is_exact_single_call_and_normalizes_usage() -> None:
     secret = _environment()["NATIVE_API_KEY"]
     payload = _responses_payload()
@@ -289,7 +393,9 @@ def test_responses_request_is_exact_single_call_and_normalizes_usage() -> None:
     assert client.resolved_binding.schema_version == "abstrak-anytime-provider-binding.v1"
     assert client.resolved_binding.agent_sha256 == _anytime_agent(bundle).sha256
     assert client.resolved_binding.provider_manifest_sha256 == bundle.provider_sha256
-    assert client.resolved_binding.dependency_conformance.formal_ready is True
+    assert client.resolved_binding.dependency_conformance.dependency_ready is True
+    assert client.resolved_binding.dependency_conformance.study_ready is False
+    assert client.study_ready is False
     assert transport.call_count == 1
     assert transport.call_protocols == ["responses"]
     sent = transport.requests[0]
@@ -325,6 +431,8 @@ def test_responses_request_is_exact_single_call_and_normalizes_usage() -> None:
     assert response.usage.output_tokens == 29
     assert response.usage.reasoning_tokens == 17
     assert response.usage.total_tokens == 130
+    assert response.usage.core_fields_complete is True
+    assert response.resource_usage_complete is True
     assert response.usage.raw_usage is not None
     assert response.usage.raw_usage["provider_debug"]["credential"] == "<redacted>"
     assert response.reasoning.effective_mode == "literal_xhigh"
@@ -333,6 +441,128 @@ def test_responses_request_is_exact_single_call_and_normalizes_usage() -> None:
     assert _environment()["NATIVE_BASE_URL"] not in artifact_text
     assert "<redacted>" in artifact_text
     assert "authorization" not in response.raw_transport_response["response_headers_allowlist"]
+
+
+def test_native_resource_usage_completeness_is_stricter_than_legacy_core_flag() -> None:
+    payload = _responses_payload()
+    payload["usage"].pop("input_tokens_details")
+    payload["usage"].pop("output_tokens_details")
+    bundle = _responses_bundle()
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=ScriptedNativeTransport(response=payload),
+        environment=_environment(),
+    )
+
+    response = client.complete(_request(bundle.model.id))
+
+    assert response.usage.core_fields_complete is True
+    assert response.usage.cached_input_tokens is None
+    assert response.usage.reasoning_tokens is None
+    assert response.resource_usage_complete is False
+
+    invalid = response.model_dump(mode="python")
+    invalid["resource_usage_complete"] = True
+    with pytest.raises(ValidationError, match="all four resource token fields"):
+        type(response).model_validate(invalid)
+
+
+def test_logical_request_containing_artifact_secret_is_rejected_before_transport() -> None:
+    secret = _environment()["NATIVE_API_KEY"]
+    bundle = _responses_bundle()
+    transport = ScriptedNativeTransport(response=_responses_payload())
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=transport,
+        environment=_environment(),
+    )
+    unsafe_request = _request(bundle.model.id).model_copy(
+        update={
+            "messages": (
+                ChatMessage(
+                    role=MessageRole.USER,
+                    content=f"accidentally pasted {secret}",
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(NativeArtifactSecretError, match="credential material"):
+        client.complete(unsafe_request)
+
+    assert transport.call_count == 0
+
+
+def test_sanitized_request_redacts_message_secrets_as_defense_in_depth(
+    monkeypatch,
+) -> None:
+    secret = _environment()["NATIVE_API_KEY"]
+    bundle = _responses_bundle()
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=ScriptedNativeTransport(response=_responses_payload()),
+        environment=_environment(),
+    )
+    unsafe_request = _request(bundle.model.id).model_copy(
+        update={
+            "messages": (
+                ChatMessage(role=MessageRole.USER, content=f"pasted {secret}"),
+            )
+        }
+    )
+    monkeypatch.setattr(client, "_reject_unsafe_logical_request", lambda request: None)
+
+    actual, sanitized = client._transport_requests(unsafe_request)
+
+    assert secret in actual["input"][0]["content"]
+    assert sanitized["input"][0]["content"] == "pasted <redacted>"
+    assert secret not in json.dumps(sanitized, ensure_ascii=False)
+
+
+def test_provider_controlled_response_scalars_are_redacted(monkeypatch) -> None:
+    secret = _environment()["NATIVE_API_KEY"]
+    bundle = _deepseek_bundle()
+    monkeypatch.setattr(
+        "abstrak.providers.native_client.evaluate_native_dependency_conformance",
+        lambda resolved_bundle: _literal_chat_conformance(resolved_bundle),
+    )
+    payload = {
+        "id": secret,
+        "model": secret,
+        "system_fingerprint": secret,
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "safe candidate"},
+                "finish_reason": secret,
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "prompt_tokens_details": {"cached_tokens": 0},
+            "completion_tokens": 4,
+            "completion_tokens_details": {"reasoning_tokens": 2},
+            "total_tokens": 14,
+        },
+    }
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=ScriptedNativeTransport(response=payload),
+        environment=_environment(),
+    )
+
+    response = client.complete(_request(bundle.model.id))
+
+    assert response.provider_request_id == "<redacted>"
+    assert response.returned_model == "<redacted>"
+    assert response.system_fingerprint == "<redacted>"
+    assert response.finish_reason == "<redacted>"
+    assert response.provider_finish_reason == "<redacted>"
+    artifact_text = json.dumps(response.model_dump(mode="json"), ensure_ascii=False)
+    assert secret not in artifact_text
 
 
 def test_optional_sampling_values_are_forwarded_but_none_is_omitted() -> None:
@@ -362,7 +592,7 @@ def test_optional_sampling_values_are_forwarded_but_none_is_omitted() -> None:
     assert "top_p" not in omitted_actual
 
 
-def test_unsupported_sampling_is_formal_blocked_before_transport() -> None:
+def test_unsupported_sampling_is_dependency_blocked_before_transport() -> None:
     bundle = _responses_bundle(temperature=0.25)
     transport = ScriptedNativeTransport(response=_responses_payload())
     client = NativeProviderClient(
@@ -373,7 +603,7 @@ def test_unsupported_sampling_is_formal_blocked_before_transport() -> None:
     )
 
     assert client.dependency_conformance.status == "fail"
-    assert client.dependency_conformance.formal_ready is False
+    assert client.dependency_conformance.dependency_ready is False
     parameter_check = next(
         check
         for check in client.dependency_conformance.checks
@@ -381,12 +611,12 @@ def test_unsupported_sampling_is_formal_blocked_before_transport() -> None:
     )
     assert parameter_check.status == "fail"
     assert "UnsupportedParamsError" in parameter_check.detail
-    with pytest.raises(NativeFormalReadinessError):
+    with pytest.raises(NativeDependencyReadinessError):
         client.complete(_request(bundle.model.id))
     assert transport.call_count == 0
 
 
-def test_deepseek_formal_call_fails_closed_before_transport() -> None:
+def test_deepseek_dependency_call_fails_closed_before_transport() -> None:
     bundle = _deepseek_bundle()
     transport = ScriptedNativeTransport(response={})
     client = NativeProviderClient(
@@ -397,10 +627,11 @@ def test_deepseek_formal_call_fails_closed_before_transport() -> None:
     )
     request = _request(bundle.model.id)
 
-    with pytest.raises(NativeFormalReadinessError, match="formal blocked"):
+    with pytest.raises(NativeDependencyReadinessError, match="dependency blocked"):
         client.complete(request)
 
-    assert client.formal_ready is False
+    assert client.dependency_ready is False
+    assert client.study_ready is False
     assert transport.call_count == 0
     actual, sanitized = client._transport_requests(request)
     assert actual["messages"] == [
@@ -420,29 +651,7 @@ def test_chat_client_dispatch_and_normalization_with_literal_conformance_fixture
     """Exercise the Chat path without weakening the production DeepSeek gate."""
 
     bundle = _deepseek_bundle()
-    reasoning = NativeReasoningRecord(
-        submitted_parameter="reasoning_effort",
-        submitted_value="xhigh",
-        effective_mode="literal_xhigh",
-        fidelity="literal",
-        evidence="scripted future adapter preserves literal xhigh",
-    )
-    conformance = NativeDependencyConformance(
-        status="pass",
-        formal_ready=True,
-        protocol="chat_completions",
-        provider_manifest_sha256=bundle.provider_sha256,
-        model_manifest_sha256=bundle.model_sha256,
-        litellm_version="1.92.0",
-        reasoning=reasoning,
-        checks=(
-            NativeConformanceCheck(
-                name="scripted_literal_xhigh",
-                status="pass",
-                detail="offline fixture only",
-            ),
-        ),
-    )
+    conformance = _literal_chat_conformance(bundle)
     monkeypatch.setattr(
         "abstrak.providers.native_client.evaluate_native_dependency_conformance",
         lambda resolved_bundle: conformance,
@@ -491,6 +700,7 @@ def test_chat_client_dispatch_and_normalization_with_literal_conformance_fixture
     assert response.usage.output_tokens == 25
     assert response.usage.reasoning_tokens == 13
     assert response.usage.total_tokens == 105
+    assert response.resource_usage_complete is True
 
 
 @pytest.mark.parametrize(
@@ -600,6 +810,30 @@ def test_provider_error_is_redacted_and_never_retried() -> None:
         NativeNormalizedError.model_validate(invalid_charge)
 
 
+def test_provider_error_code_is_redacted_from_the_complete_record() -> None:
+    secret = _environment()["NATIVE_API_KEY"]
+    error = AuthenticationError("provider rejected the request")
+    error.code = secret
+    transport = ScriptedNativeTransport(error=error)
+    bundle = _responses_bundle()
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=transport,
+        environment=_environment(),
+    )
+
+    with pytest.raises(NativeProviderCallError) as captured:
+        client.complete(_request(bundle.model.id))
+
+    assert captured.value.record.provider_code == "<redacted>"
+    artifact_text = json.dumps(
+        captured.value.record.model_dump(mode="json"),
+        ensure_ascii=False,
+    )
+    assert secret not in artifact_text
+
+
 def test_reasoning_identity_and_resolved_binding_validators_fail_closed() -> None:
     literal = NativeReasoningRecord(
         submitted_parameter="reasoning",
@@ -616,9 +850,12 @@ def test_reasoning_identity_and_resolved_binding_validators_fail_closed() -> Non
         model_manifest_sha256="b" * 64,
         requested_model="openai/gpt-5.6-luna",
         reasoning=literal,
-        formal_ready=False,
+        dependency_ready=True,
+        study_ready=False,
+        study_readiness="pending_endpoint_conformance",
     )
-    assert identity.formal_ready is False
+    assert identity.dependency_ready is True
+    assert identity.study_ready is False
 
     with pytest.raises(ValidationError, match="submit exactly"):
         NativeReasoningRecord(
@@ -694,3 +931,17 @@ def test_native_transport_dispatches_each_protocol_exactly_once() -> None:
     assert transport.call_count == 2
     assert transport.call_protocols == ["chat_completions", "responses"]
     assert [kind for kind, _ in calls] == ["chat", "responses"]
+
+
+def test_explicit_falsy_transport_is_never_replaced_by_live_default() -> None:
+    bundle = _responses_bundle()
+    transport = FalsyScriptedNativeTransport(response=_responses_payload())
+
+    client = NativeProviderClient(
+        bundle,
+        agent=_anytime_agent(bundle),
+        transport=transport,
+        environment=_environment(),
+    )
+
+    assert client.transport is transport

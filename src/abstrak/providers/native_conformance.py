@@ -6,13 +6,13 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from abstrak.providers.native_contracts import (
+    EXPECTED_LITELLM_VERSION,
+    NATIVE_DEPENDENCY_EVALUATOR_VERSION,
     NativeConformanceCheck,
     NativeDependencyConformance,
     NativeManifestBundle,
     NativeReasoningRecord,
 )
-
-EXPECTED_LITELLM_VERSION = "1.92.0"
 
 
 def _package_version() -> str:
@@ -233,18 +233,27 @@ def evaluate_native_dependency_conformance(
             (
                 reasoning.evidence
                 if reasoning.fidelity == "literal"
-                else f"formal blocked: {reasoning.evidence}"
+                else f"dependency blocked: {reasoning.evidence}"
             ),
         )
     )
     status = "fail" if any(check.status == "fail" for check in checks) else "pass"
+    dependency_ready = status == "pass" and reasoning.fidelity == "literal"
     return NativeDependencyConformance(
+        evaluator_version=NATIVE_DEPENDENCY_EVALUATOR_VERSION,
         status=status,
-        formal_ready=status == "pass" and reasoning.fidelity == "literal",
+        dependency_ready=dependency_ready,
+        study_ready=False,
+        study_readiness=(
+            "pending_endpoint_conformance"
+            if dependency_ready
+            else "dependency_blocked"
+        ),
         protocol=bundle.provider.protocol,
         provider_manifest_sha256=bundle.provider_sha256,
         model_manifest_sha256=bundle.model_sha256,
-        litellm_version=installed_version,
+        expected_litellm_version=EXPECTED_LITELLM_VERSION,
+        observed_litellm_version=installed_version,
         reasoning=reasoning,
         checks=tuple(checks),
     )

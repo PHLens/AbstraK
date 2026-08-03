@@ -135,6 +135,13 @@ The models must express 144 primary and 54 robustness trajectories without prete
 trajectories. Unknown fields, duplicate axes, invalid checkpoints, cohort collisions, unbounded
 retries, and inconsistent request ceilings fail closed.
 
+The schedule's 198 cells are the immutable planned population, not an executable queue. By default,
+`executable_cells()` exposes only the 126 always-active core cells. The 72 reserve cells require an
+integrity-checked authorization receipt bound to the study ID, exact spec hash, reserve cohort, and
+gate-evidence hash. Request ceilings are M1 planning bounds; retry-aware operational aggregation for
+tokens, GPU time, compile/evaluation work, provider time, and wall time is enforced with M4 attempt
+artifacts rather than inferred from the request ceiling.
+
 Verification:
 
 - Pure unit tests cover the exact `198 / 2,376` cardinalities and deterministic hashes.
@@ -159,6 +166,11 @@ Add a versioned provider client boundary that supports:
 
 Temperature and top-p are not inserted by a common runtime normalizer. Omitted values remain omitted.
 Responses requests do not use `previous_response_id` and request `store=false` where supported.
+Offline success is named dependency readiness only: even GPT records `study_ready=false` with
+`pending_endpoint_conformance`, while the current DeepSeek mapping remains dependency-blocked. The
+single-call client is infrastructure for scripted/shakeout validation; a formal runner must require
+a separate M9 receipt bound to the observed endpoint and model before it can execute any scoring
+request.
 
 Verification:
 

@@ -7,7 +7,7 @@ import random
 from collections import Counter
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 
 from abstrak.anytime.contracts import (
     IDENTIFIER_PATTERN,
@@ -49,15 +49,76 @@ class AnytimeScheduleCell(AnytimeModel):
         return (self.cohort_id, self.task_id, self.agent_id, self.replicate)
 
 
+def _gate_authorization_binding_sha256(
+    *,
+    study_id: str,
+    spec_sha256: str,
+    cohort_id: str,
+    evidence_sha256: str,
+) -> str:
+    return sha256_json(
+        {
+            "schema_version": "abstrak-anytime-gate-authorization-binding.v1",
+            "study_id": study_id,
+            "spec_sha256": spec_sha256,
+            "cohort_id": cohort_id,
+            "evidence_sha256": evidence_sha256,
+        }
+    )
+
+
+class AnytimeGateAuthorizationReceipt(AnytimeModel):
+    """Integrity-bound authorization for one ``core_gate`` cohort.
+
+    The evidence itself remains in its owning artifact.  This receipt binds its
+    digest to one exact study, spec, and cohort, and cannot authorize any other
+    planned cells.
+    """
+
+    schema_version: Literal["abstrak-anytime-gate-authorization.v1"] = (
+        "abstrak-anytime-gate-authorization.v1"
+    )
+    study_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    spec_sha256: str = Field(pattern=SHA256_PATTERN)
+    cohort_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    evidence_sha256: str = Field(pattern=SHA256_PATTERN)
+    authorized: Literal[True] = True
+    authorization_sha256: str = Field(pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def authorization_binds_all_inputs(self) -> AnytimeGateAuthorizationReceipt:
+        expected = _gate_authorization_binding_sha256(
+            study_id=self.study_id,
+            spec_sha256=self.spec_sha256,
+            cohort_id=self.cohort_id,
+            evidence_sha256=self.evidence_sha256,
+        )
+        if self.authorization_sha256 != expected:
+            raise ValueError("gate authorization binding hash mismatch")
+        return self
+
+    @property
+    def sha256(self) -> str:
+        return sha256_json(self)
+
+
 class AnytimeSchedule(AnytimeModel):
-    """Materialized replayable schedule bound to one exact anytime study spec."""
+    """Materialized *planned* schedule bound to one exact anytime study spec.
+
+    ``cells`` is the immutable full plan used for cardinality and hashing; it is
+    not an executable queue.  Runners must call :meth:`executable_cells`, which
+    excludes gated cohorts unless supplied a valid authorization receipt.
+    """
 
     schema_version: Literal["abstrak-anytime-schedule.v1"] = (
         "abstrak-anytime-schedule.v1"
     )
     spec: AnytimeStudySpec
     spec_sha256: str = Field(pattern=SHA256_PATTERN)
-    cells: tuple[AnytimeScheduleCell, ...] = Field(min_length=1)
+    cells: tuple[AnytimeScheduleCell, ...] = Field(
+        min_length=1,
+        description="Full planned cell set; use executable_cells() before execution",
+    )
 
     @model_validator(mode="after")
     def cells_exactly_match_spec(self) -> AnytimeSchedule:
@@ -85,11 +146,64 @@ class AnytimeSchedule(AnytimeModel):
 
     @property
     def operational_request_ceiling(self) -> int:
+        """Request-only retry ceiling, not an all-resource operational envelope.
+
+        Operational aggregation for tokens, GPU time, compile/evaluation work,
+        provider time, and wall time belongs to M4 attempt/resume accounting.
+        """
+
         return self.spec.operational_request_ceiling
 
     def cells_for_cohort(self, cohort_id: str) -> tuple[AnytimeScheduleCell, ...]:
+        """Return planned cells for inspection, regardless of activation state."""
+
         self.spec.cohort(cohort_id)
         return tuple(cell for cell in self.cells if cell.cohort_id == cohort_id)
+
+    def executable_cells(
+        self,
+        gate_authorizations: tuple[AnytimeGateAuthorizationReceipt, ...] = (),
+    ) -> tuple[AnytimeScheduleCell, ...]:
+        """Return the safe execution subset after validating every gate receipt."""
+
+        authorized_cohorts: set[str] = set()
+        for untrusted_receipt in gate_authorizations:
+            try:
+                receipt = AnytimeGateAuthorizationReceipt.model_validate(
+                    untrusted_receipt.model_dump(mode="python")
+                )
+            except (AttributeError, ValidationError) as error:
+                raise AnytimeScheduleError("invalid gate authorization receipt") from error
+            if receipt.study_id != self.spec.study_id:
+                raise AnytimeScheduleError(
+                    "gate authorization belongs to a different study"
+                )
+            if receipt.spec_sha256 != self.spec_sha256:
+                raise AnytimeScheduleError(
+                    "gate authorization belongs to a different study spec"
+                )
+            try:
+                cohort = self.spec.cohort(receipt.cohort_id)
+            except ValueError as error:
+                raise AnytimeScheduleError(
+                    "gate authorization references an unknown cohort"
+                ) from error
+            if cohort.activation != "core_gate":
+                raise AnytimeScheduleError(
+                    "gate authorization may only target a core_gate cohort"
+                )
+            if receipt.cohort_id in authorized_cohorts:
+                raise AnytimeScheduleError(
+                    "duplicate gate authorization for cohort " + receipt.cohort_id
+                )
+            authorized_cohorts.add(receipt.cohort_id)
+
+        return tuple(
+            cell
+            for cell in self.cells
+            if self.spec.cohort(cell.cohort_id).activation == "always"
+            or cell.cohort_id in authorized_cohorts
+        )
 
 
 def _cohort_seed(seed: int, cohort_id: str) -> int:
@@ -141,3 +255,31 @@ def build_anytime_schedule(spec: AnytimeStudySpec) -> AnytimeSchedule:
             "anytime axes produce ambiguous trajectory IDs: " + ", ".join(duplicates)
         )
     return AnytimeSchedule(spec=spec, spec_sha256=spec.sha256, cells=cells)
+
+
+def build_anytime_gate_authorization(
+    schedule: AnytimeSchedule,
+    *,
+    cohort_id: str,
+    evidence_sha256: str,
+) -> AnytimeGateAuthorizationReceipt:
+    """Bind trusted gate evidence to one gated cohort in one exact schedule."""
+
+    try:
+        cohort = schedule.spec.cohort(cohort_id)
+    except ValueError as error:
+        raise AnytimeScheduleError("cannot authorize an unknown cohort") from error
+    if cohort.activation != "core_gate":
+        raise AnytimeScheduleError("only a core_gate cohort requires authorization")
+    return AnytimeGateAuthorizationReceipt(
+        study_id=schedule.spec.study_id,
+        spec_sha256=schedule.spec_sha256,
+        cohort_id=cohort_id,
+        evidence_sha256=evidence_sha256,
+        authorization_sha256=_gate_authorization_binding_sha256(
+            study_id=schedule.spec.study_id,
+            spec_sha256=schedule.spec_sha256,
+            cohort_id=cohort_id,
+            evidence_sha256=evidence_sha256,
+        ),
+    )

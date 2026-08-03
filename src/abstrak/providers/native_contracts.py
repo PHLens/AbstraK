@@ -24,10 +24,32 @@ from abstrak.providers.contracts import (
 IDENTIFIER_PATTERN = r"^[a-z0-9][a-z0-9._-]*$"
 ENV_PATTERN = r"^[A-Z_][A-Z0-9_]*$"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
+EXPECTED_LITELLM_VERSION = "1.92.0"
+NATIVE_DEPENDENCY_EVALUATOR_VERSION = "native-dependency-evaluator.v1"
 
 NativeProtocol = Literal["chat_completions", "responses"]
 EffectiveReasoningMode = Literal["literal_xhigh", "thinking_enabled", "unknown"]
 ReasoningFidelity = Literal["literal", "collapsed", "unknown"]
+NativeStudyReadiness = Literal[
+    "dependency_blocked",
+    "pending_endpoint_conformance",
+]
+
+REQUIRED_NATIVE_CONFORMANCE_CHECKS: dict[NativeProtocol, tuple[str, ...]] = {
+    "chat_completions": (
+        "litellm_version",
+        "native_chat_entrypoint",
+        "generation_parameters_preserved",
+        "literal_xhigh_preserved",
+    ),
+    "responses": (
+        "litellm_version",
+        "native_responses_entrypoint",
+        "native_responses_config",
+        "generation_parameters_preserved",
+        "literal_xhigh_preserved",
+    ),
+}
 
 
 class NativeContractModel(BaseModel):
@@ -151,25 +173,77 @@ class NativeConformanceCheck(NativeContractModel):
 
 
 class NativeDependencyConformance(NativeContractModel):
+    """Offline dependency readiness, never formal study authorization.
+
+    A passing record only establishes that the pinned local dependency renders
+    the expected native request shape.  M9 must issue a separate, endpoint-bound
+    conformance receipt before a formal study runner may execute a cohort.
+    """
+
     schema_version: Literal["abstrak-anytime-provider-conformance.v1"] = (
         "abstrak-anytime-provider-conformance.v1"
     )
+    evaluator_version: Literal["native-dependency-evaluator.v1"]
     status: Literal["pass", "fail"]
-    formal_ready: bool
+    dependency_ready: bool
+    study_ready: Literal[False]
+    study_readiness: NativeStudyReadiness
     protocol: NativeProtocol
     provider_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     model_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
-    litellm_version: str
+    expected_litellm_version: Literal["1.92.0"]
+    observed_litellm_version: str = Field(min_length=1)
     reasoning: NativeReasoningRecord
     checks: tuple[NativeConformanceCheck, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def readiness_matches_checks(self) -> NativeDependencyConformance:
-        failed = any(check.status == "fail" for check in self.checks)
-        if (self.status == "fail") != failed:
+        names = tuple(check.name for check in self.checks)
+        expected_names = REQUIRED_NATIVE_CONFORMANCE_CHECKS[self.protocol]
+        if names != expected_names:
+            raise ValueError(
+                "dependency checks must exactly match the ordered protocol requirements"
+            )
+        if len(names) != len(set(names)):
+            raise ValueError("dependency checks must have unique names")
+        if any(check.status == "warn" for check in self.checks):
+            raise ValueError("required dependency checks cannot use warn status")
+
+        checks_by_name = {check.name: check for check in self.checks}
+        version_matches = (
+            self.observed_litellm_version == self.expected_litellm_version
+        )
+        expected_version_status = "pass" if version_matches else "fail"
+        if checks_by_name["litellm_version"].status != expected_version_status:
+            raise ValueError("LiteLLM version check conflicts with observed version")
+        expected_reasoning_status = (
+            "pass" if self.reasoning.fidelity == "literal" else "fail"
+        )
+        if (
+            checks_by_name["literal_xhigh_preserved"].status
+            != expected_reasoning_status
+        ):
+            raise ValueError("literal-xhigh check conflicts with reasoning evidence")
+
+        all_pass = all(check.status == "pass" for check in self.checks)
+        if (self.status == "pass") != all_pass:
             raise ValueError("conformance status does not match its checks")
-        if self.formal_ready != (self.status == "pass" and self.reasoning.fidelity == "literal"):
-            raise ValueError("formal readiness requires literal reasoning conformance")
+        expected_dependency_ready = (
+            self.status == "pass"
+            and version_matches
+            and self.reasoning.fidelity == "literal"
+        )
+        if self.dependency_ready != expected_dependency_ready:
+            raise ValueError(
+                "dependency readiness requires pinned dependencies and literal reasoning"
+            )
+        expected_study_readiness: NativeStudyReadiness = (
+            "pending_endpoint_conformance"
+            if self.dependency_ready
+            else "dependency_blocked"
+        )
+        if self.study_readiness != expected_study_readiness:
+            raise ValueError("study readiness does not match dependency readiness")
         return self
 
 
@@ -184,12 +258,21 @@ class NativeClientIdentity(NativeContractModel):
     model_manifest_sha256: str = Field(pattern=SHA256_PATTERN)
     requested_model: str = Field(min_length=1)
     reasoning: NativeReasoningRecord
-    formal_ready: bool
+    dependency_ready: bool
+    study_ready: Literal[False]
+    study_readiness: NativeStudyReadiness
 
     @model_validator(mode="after")
     def readiness_matches_reasoning(self) -> NativeClientIdentity:
-        if self.formal_ready and self.reasoning.fidelity != "literal":
-            raise ValueError("a formal-ready client requires literal reasoning fidelity")
+        if self.dependency_ready and self.reasoning.fidelity != "literal":
+            raise ValueError("a dependency-ready client requires literal reasoning fidelity")
+        expected_study_readiness: NativeStudyReadiness = (
+            "pending_endpoint_conformance"
+            if self.dependency_ready
+            else "dependency_blocked"
+        )
+        if self.study_readiness != expected_study_readiness:
+            raise ValueError("study readiness does not match dependency readiness")
         return self
 
 
@@ -248,6 +331,12 @@ class NativeNormalizedResponse(NativeContractModel):
     finish_reason: str | None = None
     provider_finish_reason: str | None = None
     usage: NormalizedUsage
+    resource_usage_complete: bool = Field(
+        description=(
+            "True exactly when input, cached-input, output, and reasoning token "
+            "counts are all provider-known"
+        )
+    )
     reasoning: NativeReasoningRecord
     started_at_utc: datetime
     finished_at_utc: datetime
@@ -259,6 +348,22 @@ class NativeNormalizedResponse(NativeContractModel):
     raw_transport_response: dict[str, Any]
     capture_fidelity: Literal["sdk_object"] = "sdk_object"
     warnings: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def resource_flag_matches_usage(self) -> NativeNormalizedResponse:
+        resource_fields = (
+            self.usage.input_tokens,
+            self.usage.cached_input_tokens,
+            self.usage.output_tokens,
+            self.usage.reasoning_tokens,
+        )
+        if self.resource_usage_complete != all(
+            value is not None for value in resource_fields
+        ):
+            raise ValueError(
+                "resource_usage_complete does not match all four resource token fields"
+            )
+        return self
 
 
 class NativeNormalizedError(NativeContractModel):
@@ -306,8 +411,8 @@ class NativeProviderCallError(RuntimeError):
         self.record = record
 
 
-class NativeFormalReadinessError(RuntimeError):
-    """Raised before transport when dependency conformance blocks a formal call."""
+class NativeDependencyReadinessError(RuntimeError):
+    """Raised before transport when the offline dependency checks block a call."""
 
 
 class NativeMalformedProviderResponse(ValueError):
@@ -330,7 +435,9 @@ def native_client_identity(
         model_manifest_sha256=bundle.model_sha256,
         requested_model=bundle.model.api_model,
         reasoning=conformance.reasoning,
-        formal_ready=conformance.formal_ready,
+        dependency_ready=conformance.dependency_ready,
+        study_ready=False,
+        study_readiness=conformance.study_readiness,
     )
 
 
@@ -360,7 +467,7 @@ def validate_anytime_agent_binding(
         "top_p": agent.generation.top_p,
     }
     actual = {
-        "provider_id": bundle.provider.litellm_provider,
+        "provider_id": bundle.provider.id,
         "model_ref": bundle.model.id,
         "native_protocol": bundle.provider.protocol,
         "max_output_tokens": bundle.model.max_output_tokens,

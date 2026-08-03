@@ -17,7 +17,12 @@ from abstrak.anytime.contracts import (
     AnytimeResourceBudget,
     AnytimeStudySpec,
 )
-from abstrak.anytime.schedule import AnytimeSchedule, build_anytime_schedule
+from abstrak.anytime.schedule import (
+    AnytimeSchedule,
+    AnytimeScheduleError,
+    build_anytime_gate_authorization,
+    build_anytime_schedule,
+)
 
 CORE_TASKS = ("kb-l1-2", "kb-l1-8", "kb-l1-40", "kb-l1-93", "kb-l1-97", "kb-l2-2")
 RESERVE_TASKS = (
@@ -142,12 +147,64 @@ def test_formal_schedule_has_exact_three_cohort_shape_and_ceilings() -> None:
     assert schedule.operational_request_ceiling == 4752
     assert tuple(cell.ordinal for cell in schedule.cells) == tuple(range(198))
     assert len({cell.trajectory_id for cell in schedule.cells}) == 198
+    assert len(schedule.executable_cells()) == 126
+    assert {
+        cell.cohort_id for cell in schedule.executable_cells()
+    } == {"primary-core", "robustness-core"}
+    authorization = build_anytime_gate_authorization(
+        schedule,
+        cohort_id="primary-reserve",
+        evidence_sha256="e" * 64,
+    )
+    assert len(schedule.executable_cells((authorization,))) == 198
+    assert schedule.executable_cells((authorization,)) == schedule.cells
     assert schedule.spec.sha256 == (
         "816f8c7a42412d86a503e4df1ad4679369ed49c4e6065ad5cb0526d9d934af9e"
     )
     assert schedule.sha256 == (
         "1bc18ed75d6ffa62671c801d20be9f38c00630c0954cc1af67c85a7a221585d4"
     )
+
+
+def test_gate_authorization_is_bound_and_fails_closed_on_wrong_or_tampered_input() -> None:
+    schedule = build_anytime_schedule(_formal_study())
+    authorization = build_anytime_gate_authorization(
+        schedule,
+        cohort_id="primary-reserve",
+        evidence_sha256="a" * 64,
+    )
+
+    tampered = authorization.model_copy(update={"evidence_sha256": "b" * 64})
+    with pytest.raises(AnytimeScheduleError, match="invalid gate authorization"):
+        schedule.executable_cells((tampered,))
+
+    other_spec = _formal_study().model_copy(update={"study_id": "other-formal-study"})
+    other_schedule = build_anytime_schedule(other_spec)
+    wrong_study = build_anytime_gate_authorization(
+        other_schedule,
+        cohort_id="primary-reserve",
+        evidence_sha256="a" * 64,
+    )
+    with pytest.raises(AnytimeScheduleError, match="different study"):
+        schedule.executable_cells((wrong_study,))
+
+    wrong_spec = build_anytime_gate_authorization(
+        build_anytime_schedule(_formal_study(seed=20260804)),
+        cohort_id="primary-reserve",
+        evidence_sha256="a" * 64,
+    )
+    with pytest.raises(AnytimeScheduleError, match="different study spec"):
+        schedule.executable_cells((wrong_spec,))
+
+    with pytest.raises(AnytimeScheduleError, match="only a core_gate"):
+        build_anytime_gate_authorization(
+            schedule,
+            cohort_id="primary-core",
+            evidence_sha256="a" * 64,
+        )
+
+    with pytest.raises(AnytimeScheduleError, match="duplicate gate authorization"):
+        schedule.executable_cells((authorization, authorization))
 
 
 def test_balanced_rotation_equalizes_every_target_position() -> None:

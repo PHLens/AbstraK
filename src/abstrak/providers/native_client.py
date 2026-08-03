@@ -17,7 +17,7 @@ from abstrak.anytime.contracts import AnytimeAgentSpec
 from abstrak.providers.contracts import ErrorCategory, LogicalRequest, NormalizedUsage, sha256_json
 from abstrak.providers.native_conformance import evaluate_native_dependency_conformance
 from abstrak.providers.native_contracts import (
-    NativeFormalReadinessError,
+    NativeDependencyReadinessError,
     NativeMalformedProviderResponse,
     NativeManifestBundle,
     NativeNormalizedError,
@@ -46,6 +46,10 @@ RESPONSE_HEADER_ALLOWLIST = {
 
 class NativeProviderConfigurationError(ValueError):
     pass
+
+
+class NativeArtifactSecretError(NativeProviderConfigurationError):
+    """Raised before an unsafe request or artifact can cross the client boundary."""
 
 
 def _json_mapping(value: Any) -> dict[str, Any]:
@@ -116,19 +120,58 @@ def _sanitized_base_url(base_url: str | None) -> str | None:
 
 
 def _redact_text(text: str, secrets: tuple[str, ...]) -> str:
+    return _replace_secrets(text, secrets)[:4000]
+
+
+def _replace_secrets(text: str, secrets: tuple[str, ...]) -> str:
     sanitized = text
     for secret in secrets:
         if secret:
             sanitized = sanitized.replace(secret, "<redacted>")
-    return sanitized[:4000]
+    return sanitized
 
 
 def _redact_json(value: Any, secrets: tuple[str, ...]) -> Any:
-    serialized = json.dumps(value, ensure_ascii=False, default=str)
-    for secret in secrets:
-        if secret:
-            serialized = serialized.replace(secret, "<redacted>")
-    return json.loads(serialized)
+    normalized = json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+    def redact(item: Any) -> Any:
+        if isinstance(item, str):
+            return _replace_secrets(item, secrets)
+        if isinstance(item, list):
+            return [redact(member) for member in item]
+        if isinstance(item, dict):
+            return {
+                _replace_secrets(str(key), secrets): redact(member)
+                for key, member in item.items()
+            }
+        return item
+
+    return redact(normalized)
+
+
+def _contains_artifact_secret(value: Any, secrets: tuple[str, ...]) -> bool:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
+    if isinstance(value, str):
+        return any(secret and secret in value for secret in secrets)
+    if isinstance(value, Mapping):
+        return any(
+            _contains_artifact_secret(str(key), secrets)
+            or _contains_artifact_secret(member, secrets)
+            for key, member in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_artifact_secret(member, secrets) for member in value)
+    return False
+
+
+def _redact_provider_scalar(value: Any, secrets: tuple[str, ...]) -> str | None:
+    if value is None:
+        return None
+    rendered = str(value)
+    if not rendered:
+        return None
+    return _redact_text(rendered, secrets)
 
 
 def _error_category(error: Exception) -> tuple[ErrorCategory, bool]:
@@ -304,7 +347,11 @@ def _responses_output(payload: Mapping[str, Any]) -> tuple[str, str | None, str 
 
 
 class NativeProviderClient:
-    """Execute one logical request through exactly one selected native protocol."""
+    """Execute one dependency-ready native call for infrastructure validation.
+
+    This client does not authorize a formal study.  A formal runner must also
+    require the endpoint-bound conformance receipt introduced in M9.
+    """
 
     def __init__(
         self,
@@ -317,7 +364,9 @@ class NativeProviderClient:
         validate_anytime_agent_binding(agent, bundle)
         self.bundle = bundle
         self.agent = agent
-        self.transport = transport or LiteLLMNativeTransport()
+        self.transport = (
+            transport if transport is not None else LiteLLMNativeTransport()
+        )
         values = environment or {}
         try:
             self._api_key = values[bundle.provider.api_key_env]
@@ -340,15 +389,29 @@ class NativeProviderClient:
                 raise NativeProviderConfigurationError("provider base URL cannot be empty")
         _validate_base_url(self._base_url)
         self.dependency_conformance = evaluate_native_dependency_conformance(bundle)
+        self._assert_artifact_secret_free(
+            self.dependency_conformance,
+            context="native dependency conformance",
+        )
         self.native_identity = native_client_identity(bundle, self.dependency_conformance)
+        self._assert_artifact_secret_free(
+            self.native_identity,
+            context="native client identity",
+        )
 
     @property
-    def formal_ready(self) -> bool:
-        return self.dependency_conformance.formal_ready
+    def dependency_ready(self) -> bool:
+        return self.dependency_conformance.dependency_ready
+
+    @property
+    def study_ready(self) -> bool:
+        """Always false until a later formal runner validates an M9 receipt."""
+
+        return False
 
     @property
     def resolved_binding(self) -> NativeResolvedProviderBinding:
-        return NativeResolvedProviderBinding(
+        binding = NativeResolvedProviderBinding(
             provider=self.bundle.provider,
             model=self.bundle.model,
             agent=self.agent,
@@ -357,6 +420,8 @@ class NativeProviderClient:
             model_manifest_sha256=self.bundle.model_sha256,
             dependency_conformance=self.dependency_conformance,
         )
+        self._assert_artifact_secret_free(binding, context="resolved provider binding")
+        return binding
 
     @property
     def artifact_secrets(self) -> tuple[str, ...]:
@@ -369,11 +434,24 @@ class NativeProviderClient:
             )
         return self._api_key, self._base_url or "", *path_secrets
 
+    def _assert_artifact_secret_free(self, value: Any, *, context: str) -> None:
+        if _contains_artifact_secret(value, self.artifact_secrets):
+            raise NativeArtifactSecretError(
+                f"{context} contains provider credential material"
+            )
+
+    def _reject_unsafe_logical_request(self, request: LogicalRequest) -> None:
+        if _contains_artifact_secret(request, self.artifact_secrets):
+            raise NativeArtifactSecretError(
+                "logical request contains provider credential material"
+            )
+
     def _transport_requests(
         self,
         request: LogicalRequest,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         validate_native_request(request, self.bundle)
+        self._reject_unsafe_logical_request(request)
         provider = self.bundle.provider
         model = self.bundle.model
         controlled = {
@@ -415,11 +493,18 @@ class NativeProviderClient:
         if self._base_url is not None:
             actual["base_url"] = self._base_url
         sanitized = {
-            **common,
+            **_redact_json(common, self.artifact_secrets),
             "api_key_env": provider.api_key_env,
-            "base_url_origin": _sanitized_base_url(self._base_url),
+            "base_url_origin": _redact_provider_scalar(
+                _sanitized_base_url(self._base_url),
+                self.artifact_secrets,
+            ),
             "base_url_sha256": sha256_json(self._base_url) if self._base_url else None,
         }
+        self._assert_artifact_secret_free(
+            sanitized,
+            context="sanitized transport request",
+        )
         return actual, sanitized
 
     def complete(
@@ -427,13 +512,15 @@ class NativeProviderClient:
         request: LogicalRequest,
     ) -> NativeNormalizedResponse:
         validate_native_request(request, self.bundle)
-        if not self.formal_ready:
+        if not self.dependency_ready:
             failures = tuple(
                 f"{check.name}: {check.detail}"
                 for check in self.dependency_conformance.checks
                 if check.status == "fail"
             )
-            raise NativeFormalReadinessError("formal blocked: " + "; ".join(failures))
+            raise NativeDependencyReadinessError(
+                "dependency blocked: " + "; ".join(failures)
+            )
 
         actual_request, sanitized_request = self._transport_requests(request)
         attempt_id = uuid4().hex
@@ -466,9 +553,15 @@ class NativeProviderClient:
                     else None
                 ),
                 provider_code=(
-                    str(provider_code) if provider_code is not None and str(provider_code) else None
+                    _redact_provider_scalar(provider_code, self.artifact_secrets)
                 ),
-                provider_type=type(error).__name__,
+                provider_type=(
+                    _redact_provider_scalar(
+                        type(error).__name__,
+                        self.artifact_secrets,
+                    )
+                    or "provider_error"
+                ),
                 sanitized_message=_redact_text(str(error), self.artifact_secrets),
                 retryable=retryable,
                 request_submitted=request_submitted,
@@ -487,6 +580,7 @@ class NativeProviderClient:
                 logical_request_sha256=sha256_json(request),
                 sanitized_transport_request=sanitized_request,
             )
+            self._assert_artifact_secret_free(record, context="normalized provider error")
             raise NativeProviderCallError(record) from error
 
         try:
@@ -525,6 +619,7 @@ class NativeProviderClient:
                 logical_request_sha256=sha256_json(request),
                 sanitized_transport_request=sanitized_request,
             )
+            self._assert_artifact_secret_free(record, context="normalized provider error")
             raise NativeProviderCallError(record) from error
 
     def _normalize_response(
@@ -592,24 +687,46 @@ class NativeProviderClient:
                 "request-id"
             )
         system_fingerprint = payload.get("system_fingerprint")
-        return NativeNormalizedResponse(
+        record = NativeNormalizedResponse(
             request_id=request.request_id,
             attempt_id=attempt_id,
-            provider_request_id=str(provider_request_id) if provider_request_id else None,
+            provider_request_id=_redact_provider_scalar(
+                provider_request_id,
+                self.artifact_secrets,
+            ),
             provider_id=self.bundle.provider.id,
             model_id=self.bundle.model.id,
             protocol=self.bundle.provider.protocol,
             provider_manifest_sha256=self.bundle.provider_sha256,
             model_manifest_sha256=self.bundle.model_sha256,
             requested_model=self.bundle.model.api_model,
-            returned_model=returned_model,
-            system_fingerprint=(
-                str(system_fingerprint) if system_fingerprint is not None else None
+            returned_model=_redact_provider_scalar(
+                returned_model,
+                self.artifact_secrets,
+            ),
+            system_fingerprint=_redact_provider_scalar(
+                system_fingerprint,
+                self.artifact_secrets,
             ),
             text=content,
-            finish_reason=finish_reason,
-            provider_finish_reason=provider_finish_reason,
+            finish_reason=_redact_provider_scalar(
+                finish_reason,
+                self.artifact_secrets,
+            ),
+            provider_finish_reason=_redact_provider_scalar(
+                provider_finish_reason,
+                self.artifact_secrets,
+            ),
             usage=usage,
+            resource_usage_complete=all(
+                value is not None
+                for value in (
+                    usage.input_tokens,
+                    usage.cached_input_tokens,
+                    usage.output_tokens,
+                    usage.reasoning_tokens,
+                )
+            ),
             reasoning=self.dependency_conformance.reasoning,
             started_at_utc=started_at,
             finished_at_utc=datetime.now(timezone.utc),
@@ -621,3 +738,5 @@ class NativeProviderClient:
             raw_transport_response=raw_sdk_record,
             warnings=tuple(warnings),
         )
+        self._assert_artifact_secret_free(record, context="normalized provider response")
+        return record

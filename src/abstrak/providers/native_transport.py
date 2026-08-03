@@ -30,8 +30,10 @@ class LiteLLMNativeTransport:
         import litellm
 
         self._litellm = litellm
-        self._completion_fn = completion_fn or litellm.completion
-        self._responses_fn = responses_fn or litellm.responses
+        self._completion_fn = (
+            completion_fn if completion_fn is not None else litellm.completion
+        )
+        self._responses_fn = responses_fn if responses_fn is not None else litellm.responses
         self.call_count = 0
         self.call_protocols: list[str] = []
 
