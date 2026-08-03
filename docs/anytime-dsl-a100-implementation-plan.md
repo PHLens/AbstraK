@@ -145,8 +145,8 @@ Add a versioned provider client boundary that supports:
 - protocol-specific output-token and `xhigh` parameter rendering;
 - normalized text, request/response ID, returned model, finish/status, input/cached/output/reasoning
   tokens, elapsed time, sanitized request, and raw SDK response;
-- conformance checks that fail when `xhigh` is rejected, removed, or cannot be evidenced by the
-  sanitized request/response contract.
+- offline conformance checks that fail when `xhigh` is omitted or changed while rendering the
+  sanitized wire request. Real endpoint acceptance remains pending until M9.
 
 Temperature and top-p are not inserted by a common runtime normalizer. Omitted values remain omitted.
 Responses requests do not use `previous_response_id` and request `store=false` where supported.
@@ -213,16 +213,17 @@ Split reference/qualifier and candidate execution into separate processes with c
 candidate sandbox receives only candidate source, public task ABI, runtime libraries, input tensors,
 and an output channel. It cannot read the repository or any private benchmark asset.
 
-Replace the legacy cross-DSL denylist with target-specific default-deny validation and runtime or
-lowered-code launch evidence for Triton, TileLang, and CuTe DSL. Add adversarial controls for frame
-inspection, filesystem reads, dynamic imports/lookups, framework fallback, dummy DSL signatures,
-input mutation, nonfinite output, hangs, OOM, and forged timing.
+Replace the legacy cross-DSL denylist with target-specific default-deny validation and contracts for
+runtime or lowered-code launch evidence for Triton, TileLang, and CuTe DSL. Add adversarial controls
+for frame inspection, filesystem reads, dynamic imports/lookups, framework fallback, dummy DSL
+signatures, input mutation, nonfinite output, hangs, OOM, and forged timing.
 
 Verification:
 
-- All hostile controls fail within their resource caps.
-- Known trusted target canaries pass with verifiable launch evidence.
-- No model request occurs.
+- Offline sandbox/IPC and validator fixtures reject every hostile control.
+- Scripted attestations prove that missing, malformed, or wrong-target launch evidence fails closed.
+- Real trusted target launch evidence remains pending until the M9 trusted GPU preflight.
+- No model request, SSH worker, GPU code, or model-generated code is used.
 
 Commit: `feat: isolate anytime candidates and verify target use`
 
@@ -233,20 +234,23 @@ sealed generators, initialization/state transfer, tolerances, numerical adversar
 and source-lineage metadata. Parameterized Level-2 modules must bind identical reference and candidate
 state rather than relying on sequential random construction.
 
-Add 36 trusted `task x target` experts, target cards with balanced unrelated examples, common eager /
-Inductor / vendor baselines, and environment contracts that bind Python, Torch, CUDA, driver, Triton,
-TileLang, CuTe/CUTLASS DSL, CUDA bindings, KernelBench revision, worker revision, isolation mode, and
-lock/archive digests.
+Add the 36 trusted `task x target` expert source inputs, target cards with balanced unrelated examples,
+common eager / Inductor / vendor baseline source inputs, and environment contracts that bind Python,
+Torch, CUDA, driver, Triton, TileLang, CuTe/CUTLASS DSL, CUDA bindings, KernelBench revision, worker
+revision, isolation mode, and lock/archive digests.
 
 Verification:
 
-- Every expert is correct, target-valid, launch-verified and stably timed.
-- Every task has a complete stable `B*`; otherwise the study stops at `invalid_floor`.
-- Target cards pass leakage and solution-similarity audits.
-- No Agent trajectory occurs.
+- Every source, task, target, card, baseline, expert and environment input is hash-bound and passes
+  offline schema, cross-reference, static and leakage checks.
+- Fake floor evidence proves that incomplete, unstable or mismatched `task x target` results block the
+  study with `invalid_floor`.
+- Real expert correctness/timing, launch verification, environment observation and `B*` construction
+  remain pending until the M9 trusted GPU preflight.
+- No model request, SSH worker, GPU code, or model-generated code is used.
 
 Commit sequence may be split by workload family and ends with:
-`feat: complete anytime workload and target floor`
+`feat: complete anytime workload and floor inputs`
 
 ### M7: Generic Anytime Analysis And Figures
 
@@ -277,7 +281,9 @@ Commit: `feat: add anytime DSL analysis and figures`
 
 Run an entirely scripted fake-provider/fake-worker study through schedule, context reconstruction,
 candidate records, checkpoints, crash/retry paths, sealed qualification, analysis and figures. Freeze
-the exact study manifests, thresholds, task groups, randomization, timing policies and code hashes.
+the logical study manifests, asset inputs, thresholds, task groups, randomization, timing policies and
+code hashes. Live environment and floor evidence are separate M9 outputs and are not fabricated by the
+offline freeze.
 
 Exit criteria:
 
@@ -290,9 +296,11 @@ Commit: `test: freeze anytime DSL offline study infrastructure`
 
 ### M9: Live Conformance And Non-Scoring Shakeout — Deferred
 
-This milestone requires a new explicit authorization because it performs billable provider requests
-and executes generated GPU code. Run provider-native `xhigh` conformance first, then trusted worker
-preflight, and finally the non-scoring 192-call shakeout.
+This milestone requires a new explicit authorization because it connects to the GPU worker, performs
+billable provider requests, and executes generated GPU code. First observe and hash the worker
+environment, then run all trusted expert, baseline and target-launch gates to construct the real
+per-target floor and `B*`. Only after that floor is valid may provider-native `xhigh` conformance and
+the non-scoring 192-call shakeout run.
 
 The shakeout passes only if each retained target produces stable correct Agent candidates in at least
 two workloads from two different workload families, infrastructure censoring remains below the frozen
@@ -326,11 +334,12 @@ replicates and must not resample individual CUDA timing trials as if they were i
 
 ## Definition Of Infrastructure Complete
 
-Infrastructure is complete only after M8. In particular, a schedule that can count 2,376 requests is
-not sufficient. Completion requires protocol-native `xhigh`, fixed-call context semantics,
-checkpoint provenance, multi-axis resource accounting, crash-safe resume, candidate isolation,
-target-use proof, complete per-target floors, artifact-only generic analysis, synthetic decision
-fixtures, and an offline end-to-end reconstruction.
+Offline infrastructure is complete only after M8. In particular, a schedule that can count 2,376
+requests is not sufficient. Completion requires protocol-native `xhigh` rendering, fixed-call context
+semantics, checkpoint provenance, multi-axis resource accounting, crash-safe resume, candidate
+isolation, target-use evidence contracts, complete per-target floor inputs, artifact-only generic
+analysis, synthetic decision fixtures, and an offline end-to-end reconstruction. Real endpoint
+acceptance, target launches, expert correctness/timing and `B*` remain M9 gates.
 
 Until then, commands that could perform a provider request or execute generated code remain outside
 the authorized scope of this implementation sequence.
