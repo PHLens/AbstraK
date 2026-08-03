@@ -410,7 +410,7 @@
     "isolation_contract_sha256": "95c8741867e70f6f7a2c892e18af18bbdb5414a22fc14008e6fc622d90cd11d0",
     "isolation_mode": "bubblewrap-distinct-processes-no-network",
     "kernelbench_revision": "423217d9fda91e0c2d67e4a43bf62f96f6d104f1",
-    "lock_sha256": "a05c87c84d725f4d238baab4ece0263cde2b0ef92fdba4f8ac74da3bdade0f45",
+    "lock_sha256": "5777e521e572b241cc11bb2892f26dce2cfc1a12c8eaa2eae5359ed4a8ef04ca",
     "minimum_driver_version": "575.51.03",
     "no_gpu_sharing": true,
     "no_mig": true,

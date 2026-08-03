@@ -157,7 +157,7 @@ DEFAULT_INPUT_MANIFEST = (
 
 # Filled after the reviewed JSON manifest is frozen.  The loader never silently accepts changed
 # default bytes; callers using another path must provide an explicit expected digest.
-PINNED_INPUT_MANIFEST_SHA256 = "ad9b4c73b5f13530fdc97ffcded7968dcea7b4c448f63decf4e34828b54afaf3"
+PINNED_INPUT_MANIFEST_SHA256 = "699c7b9b1802adabb04fb96c9de4affcd3818ad7088bb1db24638ccd03fc886f"
 
 _SHA256 = re.compile(SHA256_PATTERN)
 _SAFE_PATH_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
