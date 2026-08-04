@@ -232,6 +232,11 @@ def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path
     assert result.attempts == 2
     assert result.generation_status_counts == {"generated": 1, "provider_error": 1}
     assert len(evaluator.jobs) == 1
+    attempts = [
+        json.loads(line)
+        for line in (result.run_directory / "raw" / "attempts.jsonl").read_text().splitlines()
+    ]
+    assert attempts[0]["provider_elapsed_ms"] == 3.0
 
 
 def test_ssh_evaluator_serializes_one_job(monkeypatch: pytest.MonkeyPatch) -> None:
