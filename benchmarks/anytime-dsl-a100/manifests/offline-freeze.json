@@ -1,0 +1,484 @@
+{
+  "authorization_policy": "no-live-action-authorized",
+  "base_prompt": {
+    "other_target_results_disclosed": false,
+    "profiler_output_disclosed": false,
+    "reference_source_disclosed": false,
+    "renderer_version": "anytime-base-prompt-renderer.v1",
+    "response_contract": "one-fenced-python-source-no-prose",
+    "schema_version": "abstrak-anytime-base-prompt-policy.v1",
+    "sealed_cases_disclosed": false,
+    "system_message": "You optimize one fixed-shape GPU kernel for the selected DSL target. This is a fixed-call study: return one complete candidate per call and use only the bounded development feedback supplied by the controller. Do not use tools, retrieval, persistent provider state, or any undeclared runtime.",
+    "target_card_disclosure": "selected-target-card-only",
+    "trusted_expert_source_disclosed": false,
+    "user_section_order": [
+      "study_notice",
+      "public_workload_json",
+      "selected_target_card",
+      "response_contract"
+    ],
+    "workload_disclosure": "public-whitelist-view-only"
+  },
+  "candidate_code_executed": false,
+  "credentials_read": false,
+  "evaluation": {
+    "analysis": {
+      "bootstrap_cluster_unit": "semantic-workload-family",
+      "bootstrap_resamples": 1000,
+      "bootstrap_seed": 20260803,
+      "confidence_level": 0.95,
+      "formal_curves_use_independently_retimed_checkpoints": true,
+      "implementation": "anytime-analysis.v1",
+      "intermediate_dev_curves_are_exploratory": true,
+      "missing_cells_retained_in_denominator": true,
+      "schema_version": "abstrak-anytime-analysis-policy.v1",
+      "wall_clock_grid": "derive-common-support-from-verified-checkpoint-artifacts"
+    },
+    "continuation": {
+      "common_wall_clock_bootstrap_lower_ratio": 1.0,
+      "common_wall_clock_oracle_ratio": 1.03,
+      "iteration_endpoint_oracle_ratio": 1.05,
+      "minimum_distinct_stable_winner_targets": 2,
+      "minimum_eligible_workloads_per_target_core": 4,
+      "minimum_eligible_workloads_per_target_full": 8,
+      "minimum_stable_winner_families": 2,
+      "minimum_stable_winner_workloads": 3,
+      "reserve_activation": "all-or-none-integrity-bound-core-gate",
+      "robustness_alternative_oracle_ratio": 1.03,
+      "robustness_total_workloads": 6,
+      "robustness_winner_agreement_workloads": 4,
+      "schema_version": "abstrak-anytime-continuation-policy.v1",
+      "unstable_timing_cannot_drive_gate": true,
+      "unsupported_targets_cannot_drive_gate": true
+    },
+    "schema_version": "abstrak-anytime-evaluation-policy.v1",
+    "shakeout": {
+      "complete_target_use_evidence_required": true,
+      "exact_checkpoint_reproduction_required": true,
+      "maximum_infrastructure_censoring_rate": 0.05,
+      "maximum_uniform_target_card_revisions": 1,
+      "minimum_distinct_families_per_target": 2,
+      "minimum_stable_correct_workloads_per_target": 2,
+      "persistent_failure_stops_study": true,
+      "schema_version": "abstrak-anytime-shakeout-policy.v1",
+      "scoring": false
+    },
+    "timing": {
+      "formal_checkpoint": {
+        "block_statistic": "median",
+        "clock": "cuda-events",
+        "discard_initial_trials": 1,
+        "endpoint_statistic": "median-block-median",
+        "evidence_scope": "formal-sealed",
+        "independent_clean_process_blocks": 3,
+        "input_policy": "separate-fixed-timing-input",
+        "role": "formal-checkpoint",
+        "schema_version": "abstrak-anytime-timing-protocol.v1",
+        "timed_trials": 200,
+        "warmup_runs": 25
+      },
+      "schema_version": "abstrak-anytime-timing-policy.v1",
+      "search": {
+        "block_statistic": "median",
+        "clock": "cuda-events",
+        "discard_initial_trials": 1,
+        "endpoint_statistic": "median-block-median",
+        "evidence_scope": "exploratory-dev",
+        "independent_clean_process_blocks": 1,
+        "input_policy": "separate-fixed-timing-input",
+        "role": "search-selection",
+        "schema_version": "abstrak-anytime-timing-protocol.v1",
+        "timed_trials": 100,
+        "warmup_runs": 5
+      }
+    },
+    "winner": {
+      "agent_replicates_are_statistical_units": true,
+      "p_best_role": "descriptive-only",
+      "practical_equivalence_relative_tolerance": 0.05,
+      "schema_version": "abstrak-anytime-winner-policy.v1",
+      "tie_rule": "retain-all-targets-within-relative-band",
+      "timing_trials_are_not_statistical_units": true
+    }
+  },
+  "freeze_id": "anytime-dsl-a100-m8",
+  "generated_code_created": false,
+  "gpu_code_executed": false,
+  "live_environment_observed": false,
+  "live_floor_constructed": false,
+  "live_ready": false,
+  "m9_blockers": [
+    "clean-matching-controller-and-worker-revisions-not-observed",
+    "worker-environment-and-a100-resource-feasibility-not-observed",
+    "trusted-expert-and-common-baseline-sources-not-materialized",
+    "valid-target-expert-and-b-star-floor-not-constructed",
+    "real-os-candidate-containment-not-observed",
+    "real-triton-tilelang-cute-launches-not-verified",
+    "deepseek-literal-xhigh-dependency-and-endpoint-conformance-not-passed",
+    "gpt-literal-xhigh-endpoint-conformance-not-passed",
+    "non-scoring-shakeout-not-run"
+  ],
+  "provider_dependencies": [
+    {
+      "agent_id": "deepseek-v4-flash",
+      "conformance": {
+        "checks": [
+          {
+            "detail": "expected 1.92.0, found 1.92.0",
+            "name": "litellm_version",
+            "status": "pass"
+          },
+          {
+            "detail": "litellm.completion is available for the DeepSeek Chat route",
+            "name": "native_chat_entrypoint",
+            "status": "pass"
+          },
+          {
+            "detail": "all requested non-reasoning generation parameters were preserved",
+            "name": "generation_parameters_preserved",
+            "status": "pass"
+          },
+          {
+            "detail": "dependency blocked: LiteLLM DeepSeek maps every non-none effort to binary thinking-enabled",
+            "name": "literal_xhigh_preserved",
+            "status": "fail"
+          }
+        ],
+        "dependency_ready": false,
+        "evaluator_version": "native-dependency-evaluator.v1",
+        "expected_litellm_version": "1.92.0",
+        "model_manifest_sha256": "71d486d082bd9018f55117d0b56064742d29630ac35a0ace228b58dd5fc72333",
+        "observed_litellm_version": "1.92.0",
+        "protocol": "chat_completions",
+        "provider_manifest_sha256": "d70df1b844f4126266cc392c318efab0953f604eae8e8b1c31a7146655ed87b7",
+        "reasoning": {
+          "effective_mode": "thinking_enabled",
+          "evidence": "LiteLLM DeepSeek maps every non-none effort to binary thinking-enabled",
+          "fidelity": "collapsed",
+          "requested_effort": "xhigh",
+          "schema_version": "abstrak-anytime-provider-reasoning.v1",
+          "submitted_parameter": "reasoning_effort",
+          "submitted_value": "xhigh"
+        },
+        "schema_version": "abstrak-anytime-provider-conformance.v1",
+        "status": "fail",
+        "study_readiness": "dependency_blocked",
+        "study_ready": false
+      },
+      "conformance_sha256": "3a248c85eff7a58e30ff287fd5b7cae27c8e0e5b137c90753a34c615892c052e",
+      "model_manifest_sha256": "71d486d082bd9018f55117d0b56064742d29630ac35a0ace228b58dd5fc72333",
+      "provider_manifest_sha256": "d70df1b844f4126266cc392c318efab0953f604eae8e8b1c31a7146655ed87b7",
+      "schema_version": "abstrak-anytime-provider-dependency-binding.v1"
+    },
+    {
+      "agent_id": "gpt-5.6-luna",
+      "conformance": {
+        "checks": [
+          {
+            "detail": "expected 1.92.0, found 1.92.0",
+            "name": "litellm_version",
+            "status": "pass"
+          },
+          {
+            "detail": "litellm.responses is available for the OpenAI Responses route",
+            "name": "native_responses_entrypoint",
+            "status": "pass"
+          },
+          {
+            "detail": "OpenAIResponsesAPIConfig",
+            "name": "native_responses_config",
+            "status": "pass"
+          },
+          {
+            "detail": "all requested Responses generation parameters were preserved",
+            "name": "generation_parameters_preserved",
+            "status": "pass"
+          },
+          {
+            "detail": "native OpenAI Responses mapping preserves reasoning.effort=xhigh",
+            "name": "literal_xhigh_preserved",
+            "status": "pass"
+          }
+        ],
+        "dependency_ready": true,
+        "evaluator_version": "native-dependency-evaluator.v1",
+        "expected_litellm_version": "1.92.0",
+        "model_manifest_sha256": "6c9ebf3942e3dc2658f18d68ae345995f1436ce3e734ae2ff3de23ea0eec05d4",
+        "observed_litellm_version": "1.92.0",
+        "protocol": "responses",
+        "provider_manifest_sha256": "3e01ccc34b83ac73406c71d41050ec93bb9ad9d8128fe60699b99eeda3a376ff",
+        "reasoning": {
+          "effective_mode": "literal_xhigh",
+          "evidence": "native OpenAI Responses mapping preserves reasoning.effort=xhigh",
+          "fidelity": "literal",
+          "requested_effort": "xhigh",
+          "schema_version": "abstrak-anytime-provider-reasoning.v1",
+          "submitted_parameter": "reasoning",
+          "submitted_value": {
+            "effort": "xhigh"
+          }
+        },
+        "schema_version": "abstrak-anytime-provider-conformance.v1",
+        "status": "pass",
+        "study_readiness": "pending_endpoint_conformance",
+        "study_ready": false
+      },
+      "conformance_sha256": "6218a1ead8bcedf8a7113f1150d17c8ff56f31e0ecc1c77fc7e91a558cbd2d23",
+      "model_manifest_sha256": "6c9ebf3942e3dc2658f18d68ae345995f1436ce3e734ae2ff3de23ea0eec05d4",
+      "provider_manifest_sha256": "3e01ccc34b83ac73406c71d41050ec93bb9ad9d8128fe60699b99eeda3a376ff",
+      "schema_version": "abstrak-anytime-provider-dependency-binding.v1"
+    }
+  ],
+  "provider_requests_performed": false,
+  "randomization": {
+    "cross_trajectory_state": "forbidden",
+    "independent_agent_replicates": true,
+    "schema_version": "abstrak-anytime-randomization.v1",
+    "seed": 20260803,
+    "target_order": "deterministic-balanced-rotation"
+  },
+  "repository_revision_policy": "same-clean-controller-worker-commit-observed-in-m9",
+  "schema_version": "abstrak-anytime-offline-freeze.v1",
+  "source_asset_bundle_sha256": "318e4165e2ce9596cf4f93b4242ec577b9c6d6bcbcf6cfb44a9a337495a748de",
+  "source_assets": [
+    {
+      "raw_sha256": "8f41d0f4019e78d2259e1b802c3ede9623a7896c499f94801a1c370c0be2d0c2",
+      "relative_path": "docs/anytime-dsl-a100-implementation-plan.md",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 21719
+    },
+    {
+      "raw_sha256": "0e9d8ba736a53c5d03360cfebb04c317bc94776807f767b713ac4e36a0019796",
+      "relative_path": "pyproject.toml",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 1301
+    },
+    {
+      "raw_sha256": "bb0ef9cb80881811efe2db686c36eda24f5ef1bdceb6422ea4f2bf01a19c9a89",
+      "relative_path": "scripts/bootstrap-a100.sh",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 5112
+    },
+    {
+      "raw_sha256": "2a85e76e50efdd9feb6350a2a72b36ae1bbe352ac46c1234211c2d32417d137d",
+      "relative_path": "scripts/freeze_anytime_offline.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 5308
+    },
+    {
+      "raw_sha256": "4d80e8e897ce240002b8d2d2621ecc405ff87010140689611f9af12a839185bf",
+      "relative_path": "scripts/update-worker.sh",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 960
+    },
+    {
+      "raw_sha256": "989fdd1c5bd86da467c634e0552eb18942fe5c4eb5524c4bc8b6024e5412b9ff",
+      "relative_path": "src/abstrak/anytime/__init__.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 16768
+    },
+    {
+      "raw_sha256": "a1413de947e9f8c21f2b0b010aaafb9841e7570438990487dbd3a3525028bc62",
+      "relative_path": "src/abstrak/anytime/analysis.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 64209
+    },
+    {
+      "raw_sha256": "f15289b996e9de3f11e00e68f9a78ef1414364fada7422cc3e3de9aa2dbced45",
+      "relative_path": "src/abstrak/anytime/artifacts.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 65841
+    },
+    {
+      "raw_sha256": "c54d1a8f6f68a04229f89216dc1230914b02c55b59d3a5fe998387f8ef9462e2",
+      "relative_path": "src/abstrak/anytime/context.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 15963
+    },
+    {
+      "raw_sha256": "7556446827a47dbad838d659e19fe4f208ad17def03941f9a823149cbe8388f1",
+      "relative_path": "src/abstrak/anytime/contracts.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 19118
+    },
+    {
+      "raw_sha256": "93ded304442d4e39c50262cf0fb6dc932ae35ebd7fcbde349137823a96fd8b1f",
+      "relative_path": "src/abstrak/anytime/figures.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 38771
+    },
+    {
+      "raw_sha256": "8a26893abce0d55bd21593e37f731e72063a0adab4c751350531dbbb9c74a854",
+      "relative_path": "src/abstrak/anytime/floor.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 26197
+    },
+    {
+      "raw_sha256": "5f839effbc13f56503df44baeb86fab5ceebba51240a6a48f66356b718aba06c",
+      "relative_path": "src/abstrak/anytime/freeze.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 42065
+    },
+    {
+      "raw_sha256": "2206054273468bd30c1dd4eb4a749a5b85350b6b864c2b67ef74644fc34f3512",
+      "relative_path": "src/abstrak/anytime/isolation.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 14799
+    },
+    {
+      "raw_sha256": "7d5071bf0062a465e5ab6085b0c1e287a624b5013fc4150603e91533f6387262",
+      "relative_path": "src/abstrak/anytime/ledger.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 56903
+    },
+    {
+      "raw_sha256": "064d825a3b5e4e67e5a80b9db27ef7640e1ca026b30d7faf99afadba48aab1a1",
+      "relative_path": "src/abstrak/anytime/manifests.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 2735
+    },
+    {
+      "raw_sha256": "d8483be88eacf8f3c77d9b11f7e821347c8446a4ac461970d09b692b73eaae3e",
+      "relative_path": "src/abstrak/anytime/prompts.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 6382
+    },
+    {
+      "raw_sha256": "270b2889e0759ed6122b748a0551c0ad0edb32baa39492dec7254450051c3de4",
+      "relative_path": "src/abstrak/anytime/qualification.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 43270
+    },
+    {
+      "raw_sha256": "46f894d6ea38d70fb004f47aa56a1a9144bdba3113f1f8bf088495af74b67184",
+      "relative_path": "src/abstrak/anytime/rehearsal.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 73048
+    },
+    {
+      "raw_sha256": "170c02bc2abb16cd4143fbaa9d7dfd99a7d5458eab66aae39e3d8cd711a38d65",
+      "relative_path": "src/abstrak/anytime/resume.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 33446
+    },
+    {
+      "raw_sha256": "3dd640c23814096e173cc029a6acbc56ce2fecd8ab30c2b27c8c23523b7a8ba0",
+      "relative_path": "src/abstrak/anytime/schedule.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 10617
+    },
+    {
+      "raw_sha256": "293d9c6444db37f1eb4f8525b992573c6a980d8ac27f886e6db3ed012d4aff52",
+      "relative_path": "src/abstrak/anytime/workloads.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 40416
+    },
+    {
+      "raw_sha256": "5b3b8e14bad755108daef95488dbf9c363aa0492c81bddb1056d981ff568d2d6",
+      "relative_path": "src/abstrak/providers/contracts.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 9088
+    },
+    {
+      "raw_sha256": "cdc27213791f4f0c3f8a341a085745b622b8a77bcb9c420cfe83b9792c4cc2be",
+      "relative_path": "src/abstrak/providers/native_client.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 28995
+    },
+    {
+      "raw_sha256": "587bfa55ef23dc6a53613b4427a879e916d68bf2886b6c044c1c238bd49491d8",
+      "relative_path": "src/abstrak/providers/native_conformance.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 9264
+    },
+    {
+      "raw_sha256": "a12432e43b4a4e35ba72ca911db64332385ceb8f80b5ce322bee510437fce75a",
+      "relative_path": "src/abstrak/providers/native_contracts.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 19466
+    },
+    {
+      "raw_sha256": "3caa3cb5d6e761f6233d4b7fe564554e4a69b669d822ffeb7952833c81a102c8",
+      "relative_path": "src/abstrak/providers/native_transport.py",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 3667
+    },
+    {
+      "raw_sha256": "5777e521e572b241cc11bb2892f26dce2cfc1a12c8eaa2eae5359ed4a8ef04ca",
+      "relative_path": "uv.lock",
+      "schema_version": "abstrak-anytime-source-asset.v1",
+      "size_bytes": 203829
+    }
+  ],
+  "ssh_connections_performed": false,
+  "studies": [
+    {
+      "canonical_spec_sha256": "e5534fecf63d83cb89708e8c3c7b0b7c9a2163d63cc93d9a42c8d030d4a015ef",
+      "default_executable_trajectories": 126,
+      "operational_request_ceiling": 4752,
+      "planned_trajectories": 198,
+      "raw_sha256": "89c789c31d1340984f0180189a678334207dbf0cbda6a33abc8af48d085a04b9",
+      "relative_path": "formal-study.json",
+      "role": "formal",
+      "schedule_sha256": "2582bd909cf7f9bfb43960e7443062155b0efea07c5cff06754978a877f056e9",
+      "schema_version": "abstrak-anytime-study-freeze-binding.v1",
+      "scientific_request_ceiling": 2376
+    },
+    {
+      "canonical_spec_sha256": "427639a328c9bfbdf1f63e8ca64f7dcc69327b6da94d76a30c7827d6218cb069",
+      "default_executable_trajectories": 48,
+      "operational_request_ceiling": 384,
+      "planned_trajectories": 48,
+      "raw_sha256": "6554fff331cd6b6707b8d55dd0f484987ee67afe58ef12bef02d3461770ac5c5",
+      "relative_path": "shakeout-study.json",
+      "role": "shakeout",
+      "schedule_sha256": "bc99f932581445505a9e9ec6aa7259af00545696242307e6c3bcd7b1d3883515",
+      "schema_version": "abstrak-anytime-study-freeze-binding.v1",
+      "scientific_request_ceiling": 192
+    }
+  ],
+  "targets": [
+    "triton-a100",
+    "tilelang-a100",
+    "cute-a100"
+  ],
+  "task_groups": {
+    "core": [
+      "l1-2-standard-matmul",
+      "l1-8-irregular-matmul",
+      "l1-40-layernorm",
+      "l1-93-masked-cumsum",
+      "l1-97-scaled-dot-product-attention",
+      "l2-2-convtranspose2d-bias-clamp-scale"
+    ],
+    "reserve": [
+      "l1-24-logsoftmax",
+      "l1-85-asymmetric-depthwise-conv2d",
+      "l2-14-gemm-divide-sum-scaling",
+      "l2-99-matmul-gelu-softmax",
+      "l2-1-conv2d-relu-biasadd",
+      "l2-85-conv2d-groupnorm-scale-pool-clamp"
+    ],
+    "schema_version": "abstrak-anytime-task-groups.v1",
+    "shakeout": [
+      "l1-2-standard-matmul",
+      "l1-40-layernorm",
+      "l1-93-masked-cumsum",
+      "l2-2-convtranspose2d-bias-clamp-scale"
+    ]
+  },
+  "workload_inputs": {
+    "canonical_manifest_sha256": "686fcc2b0163c635a70820e7e452f9ff0b013bc66c2fd03d414dc46cf6a2112d",
+    "environment_contract_sha256": "945c4bbe3b45277a586d24873e6c5981c9786a8a60bb8d31c73c5e9e47455e95",
+    "floor_policy_sha256": "205f396447b4212b5f4a982e4e305069cdcd00c64969e1859d4631dbbdc9bd06",
+    "isolation_contract_sha256": "95c8741867e70f6f7a2c892e18af18bbdb5414a22fc14008e6fc622d90cd11d0",
+    "raw_sha256": "699c7b9b1802adabb04fb96c9de4affcd3818ad7088bb1db24638ccd03fc886f",
+    "relative_path": "benchmarks/anytime-dsl-a100/manifests/inputs.json",
+    "schema_version": "abstrak-anytime-workload-freeze-binding.v1",
+    "target_static_policy_sha256": [
+      "994f39cf42ec8ee841e0b3ba833e68026c3292a2ac57082cbb31a49d19c620f3",
+      "ec83feb7f0484b2e17e3a005ec783abcf961b2d44acec74c4a38ca4694bb44b7",
+      "4db0d97e66caec156460aef011a664a8db05bdddff6c22a9b3d47495f8a12940"
+    ]
+  }
+}

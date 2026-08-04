@@ -24,3 +24,26 @@ validator returns `invalid_floor`; it never treats these reservations as impleme
 The three target-card inputs reuse the independently content-addressed R1 cards. Each has exactly one
 unrelated VectorAdd example, so the study does not introduce task-specific example leakage or unequal
 few-shot counts across targets.
+
+## M8 Offline Freeze And Rehearsal
+
+The reviewed logical freeze is split into `manifests/formal-study.json`,
+`manifests/shakeout-study.json`, and `manifests/offline-freeze.json`. It pins the study axes,
+balanced schedule hashes, public base-prompt policy, timing/winner/continuation thresholds, native
+provider dependency conformance, M6 input digests, and the source-code inventory. The freeze is
+explicitly non-live: provider readiness is not endpoint authorization, and environment/floor evidence
+remain M9 blockers.
+
+Generate the files during review, then use the pinned check before any live authorization:
+
+```bash
+uv run python scripts/freeze_anytime_offline.py
+uv run python scripts/freeze_anytime_offline.py --check --require-clean
+```
+
+The optional `--rehearse DIRECTORY` flag is available only with `--check`. It writes a complete
+48-trajectory fake-provider/fake-worker shakeout to a new directory, including one request-before-
+dispatch crash and bounded retry, 192 scripted responses, phase journals, pending-M9 qualification
+fixtures, invalid-floor output, analysis tables, and figures. Candidate source is statically inspected
+only; no provider credentials, network request, SSH connection, GPU API, or candidate execution is
+performed. The rehearsal is synthetic evidence and cannot authorize M9 or formal scoring.

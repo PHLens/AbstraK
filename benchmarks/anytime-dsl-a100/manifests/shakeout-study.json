@@ -1,0 +1,192 @@
+{
+  "agents": [
+    {
+      "generation": {
+        "max_output_tokens": 16384,
+        "reasoning": {
+          "conformance_requirement": "literal_xhigh",
+          "requested_reasoning_effort": "xhigh",
+          "schema_version": "abstrak-anytime-reasoning.v1"
+        },
+        "schema_version": "abstrak-anytime-generation.v1",
+        "temperature": null,
+        "top_p": null
+      },
+      "id": "deepseek-v4-flash",
+      "model_ref": "deepseek-v4-flash",
+      "native_protocol": "chat_completions",
+      "provider_id": "deepseek",
+      "schema_version": "abstrak-anytime-agent.v1"
+    },
+    {
+      "generation": {
+        "max_output_tokens": 16384,
+        "reasoning": {
+          "conformance_requirement": "literal_xhigh",
+          "requested_reasoning_effort": "xhigh",
+          "schema_version": "abstrak-anytime-reasoning.v1"
+        },
+        "schema_version": "abstrak-anytime-generation.v1",
+        "temperature": null,
+        "top_p": null
+      },
+      "id": "gpt-5.6-luna",
+      "model_ref": "gpt-5.6-luna",
+      "native_protocol": "responses",
+      "provider_id": "openai",
+      "schema_version": "abstrak-anytime-agent.v1"
+    }
+  ],
+  "cohorts": [
+    {
+      "activation": "always",
+      "agent_id": "deepseek-v4-flash",
+      "id": "deepseek-v4-flash-shakeout",
+      "loop": {
+        "budget": {
+          "max_candidate_seconds_per_call": 600.0,
+          "max_compile_attempts": 4,
+          "max_evaluation_attempts": 4,
+          "max_gpu_seconds": 2400.0,
+          "max_provider_seconds_per_call": 600.0,
+          "max_scientific_calls": 4,
+          "max_total_output_tokens": 65536,
+          "max_trajectory_wall_seconds": 86400.0,
+          "schema_version": "abstrak-anytime-resource-budget.v1"
+        },
+        "checkpoints": {
+          "calls": [
+            1,
+            4
+          ],
+          "schema_version": "abstrak-anytime-checkpoint-policy.v1"
+        },
+        "context": {
+          "automatic_compaction": "forbidden",
+          "component_order": [
+            "base_prompt",
+            "incumbent",
+            "previous_candidate",
+            "previous_feedback"
+          ],
+          "feedback_schema_version": "anytime-dev-feedback.v1",
+          "max_candidate_source_characters": 262144,
+          "max_diagnostic_characters_per_item": 1000,
+          "max_diagnostic_items": 16,
+          "max_error_characters": 2000,
+          "mode": "reconstructed",
+          "oversize_source_policy": "reject",
+          "previous_response_id": "forbidden",
+          "provider_session_state": "forbidden",
+          "renderer_version": "anytime-context-renderer.v1",
+          "schema_version": "abstrak-anytime-context-policy.v1"
+        },
+        "incumbent_selection": "best_eligible_latency",
+        "infrastructure": {
+          "ambiguous_submission_policy": "terminal",
+          "max_attempts_per_trajectory": 2,
+          "schema_version": "abstrak-anytime-infrastructure-policy.v1",
+          "submitted_failures_consume_scientific_calls": true,
+          "unsubmitted_failures_consume_scientific_calls": false
+        },
+        "schema_version": "abstrak-anytime-loop-policy.v1",
+        "stop_policy": "fixed_calls"
+      },
+      "order_policy": "balanced_rotation",
+      "replicates": [
+        1,
+        2
+      ],
+      "schema_version": "abstrak-anytime-cohort.v1",
+      "scoring": false,
+      "target_ids": [
+        "triton-a100",
+        "tilelang-a100",
+        "cute-a100"
+      ],
+      "task_ids": [
+        "l1-2-standard-matmul",
+        "l1-40-layernorm",
+        "l1-93-masked-cumsum",
+        "l2-2-convtranspose2d-bias-clamp-scale"
+      ]
+    },
+    {
+      "activation": "always",
+      "agent_id": "gpt-5.6-luna",
+      "id": "gpt-5.6-luna-shakeout",
+      "loop": {
+        "budget": {
+          "max_candidate_seconds_per_call": 600.0,
+          "max_compile_attempts": 4,
+          "max_evaluation_attempts": 4,
+          "max_gpu_seconds": 2400.0,
+          "max_provider_seconds_per_call": 600.0,
+          "max_scientific_calls": 4,
+          "max_total_output_tokens": 65536,
+          "max_trajectory_wall_seconds": 86400.0,
+          "schema_version": "abstrak-anytime-resource-budget.v1"
+        },
+        "checkpoints": {
+          "calls": [
+            1,
+            4
+          ],
+          "schema_version": "abstrak-anytime-checkpoint-policy.v1"
+        },
+        "context": {
+          "automatic_compaction": "forbidden",
+          "component_order": [
+            "base_prompt",
+            "incumbent",
+            "previous_candidate",
+            "previous_feedback"
+          ],
+          "feedback_schema_version": "anytime-dev-feedback.v1",
+          "max_candidate_source_characters": 262144,
+          "max_diagnostic_characters_per_item": 1000,
+          "max_diagnostic_items": 16,
+          "max_error_characters": 2000,
+          "mode": "reconstructed",
+          "oversize_source_policy": "reject",
+          "previous_response_id": "forbidden",
+          "provider_session_state": "forbidden",
+          "renderer_version": "anytime-context-renderer.v1",
+          "schema_version": "abstrak-anytime-context-policy.v1"
+        },
+        "incumbent_selection": "best_eligible_latency",
+        "infrastructure": {
+          "ambiguous_submission_policy": "terminal",
+          "max_attempts_per_trajectory": 2,
+          "schema_version": "abstrak-anytime-infrastructure-policy.v1",
+          "submitted_failures_consume_scientific_calls": true,
+          "unsubmitted_failures_consume_scientific_calls": false
+        },
+        "schema_version": "abstrak-anytime-loop-policy.v1",
+        "stop_policy": "fixed_calls"
+      },
+      "order_policy": "balanced_rotation",
+      "replicates": [
+        1,
+        2
+      ],
+      "schema_version": "abstrak-anytime-cohort.v1",
+      "scoring": false,
+      "target_ids": [
+        "triton-a100",
+        "tilelang-a100",
+        "cute-a100"
+      ],
+      "task_ids": [
+        "l1-2-standard-matmul",
+        "l1-40-layernorm",
+        "l1-93-masked-cumsum",
+        "l2-2-convtranspose2d-bias-clamp-scale"
+      ]
+    }
+  ],
+  "schema_version": "abstrak-anytime-study-spec.v1",
+  "seed": 20260803,
+  "study_id": "anytime-dsl-a100-shakeout",
+  "study_kind": "shakeout"
+}
