@@ -14,7 +14,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from abstrak.evaluation.contracts import CellSpec, EvaluationResult
+from abstrak.evaluation.contracts import (
+    CellSpec,
+    EvaluationResult,
+    Precision,
+    TargetName,
+)
 
 RUNTIME_DISTRIBUTIONS = (
     "torch",
@@ -60,7 +65,9 @@ def _runtime_metadata(torch: Any, device: str) -> dict[str, Any]:
 
 def _result(
     *,
-    spec: CellSpec,
+    cell_id: str,
+    backend: TargetName,
+    precision: Precision,
     status: str,
     started_at: datetime,
     compiled: bool = False,
@@ -76,10 +83,10 @@ def _result(
     if correctness and kernel_runtime_ms and reference_runtime_ms:
         ratio = reference_runtime_ms / kernel_runtime_ms
     return EvaluationResult(
-        cell_id=spec.cell_id,
+        cell_id=cell_id,
         status=status,
-        backend=spec.target,
-        precision=spec.precision,
+        backend=backend,
+        precision=precision,
         compiled=compiled,
         correctness=correctness,
         kernel_runtime_ms=kernel_runtime_ms,
@@ -97,6 +104,228 @@ def _result(
     )
 
 
+def _load_kernelbench_runtime(
+    kernelbench_root: str | Path,
+) -> tuple[Any, Any, Any]:
+    root = Path(kernelbench_root).expanduser().resolve()
+    source_path = str(root / "src")
+    if source_path not in sys.path:
+        sys.path.insert(0, source_path)
+    import torch
+    from kernelbench import eval as kernel_eval
+    from kernelbench.kernel_static_checker import validate_kernel_static
+
+    return torch, kernel_eval, validate_kernel_static
+
+
+def load_kernelbench_reference(
+    kernelbench_root: str | Path,
+    *,
+    task_level: int,
+    problem_id: int,
+) -> str:
+    """Load one KernelBench reference by its stable level/problem identifier."""
+
+    root = Path(kernelbench_root).expanduser().resolve()
+    level_directory = root / "KernelBench" / f"level{task_level}"
+    matches = sorted(level_directory.glob(f"{problem_id}_*.py"))
+    if len(matches) != 1:
+        raise ValueError(
+            f"expected one source for level{task_level}-problem{problem_id}, "
+            f"found {len(matches)} in {level_directory}"
+        )
+    return matches[0].read_text(encoding="utf-8")
+
+
+def evaluate_candidate_source(
+    *,
+    cell_id: str,
+    target: TargetName,
+    precision: Precision,
+    reference_source: str,
+    candidate_source: str,
+    kernelbench_root: str | Path,
+    device: str,
+    num_correct_trials: int,
+    num_perf_trials: int,
+    timing_method: str,
+    excessive_speedup_threshold: float,
+    static_check: bool,
+) -> EvaluationResult:
+    """Evaluate one candidate while leaving task and artifact ownership to the caller."""
+
+    started_at = datetime.now(timezone.utc)
+    base_metadata = {"python_version": platform.python_version(), "device": device}
+    try:
+        torch, kernel_eval, validate_kernel_static = _load_kernelbench_runtime(kernelbench_root)
+    except Exception as error:
+        return _result(
+            cell_id=cell_id,
+            backend=target,
+            precision=precision,
+            status="environment_error",
+            started_at=started_at,
+            metadata=base_metadata,
+            error=f"{type(error).__name__}: {error}",
+        )
+
+    runtime_metadata = _runtime_metadata(torch, device)
+    if not torch.cuda.is_available():
+        return _result(
+            cell_id=cell_id,
+            backend=target,
+            precision=precision,
+            status="environment_error",
+            started_at=started_at,
+            metadata={"runtime_environment": runtime_metadata},
+            error="CUDA is not available",
+        )
+
+    static_errors: tuple[str, ...] = ()
+    static_warnings: tuple[str, ...] = ()
+    if static_check:
+        try:
+            valid, errors, warnings = validate_kernel_static(
+                candidate_source,
+                backend=target,
+                precision=precision,
+            )
+            static_errors = tuple(str(item) for item in errors)
+            static_warnings = tuple(str(item) for item in warnings)
+        except Exception as error:
+            return _result(
+                cell_id=cell_id,
+                backend=target,
+                precision=precision,
+                status="harness_error",
+                started_at=started_at,
+                metadata={"runtime_environment": runtime_metadata},
+                error=f"static checker failed: {type(error).__name__}: {error}",
+            )
+        if not valid:
+            return _result(
+                cell_id=cell_id,
+                backend=target,
+                precision=precision,
+                status="static_check_failed",
+                started_at=started_at,
+                static_errors=static_errors,
+                static_warnings=static_warnings,
+                metadata={"runtime_environment": runtime_metadata},
+            )
+
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            execution = kernel_eval.eval_kernel_against_ref(
+                original_model_src=reference_source,
+                custom_model_src=candidate_source,
+                num_correct_trials=num_correct_trials,
+                num_perf_trials=num_perf_trials,
+                measure_performance=True,
+                timing_method=timing_method,
+                verbose=False,
+                device=torch.device(device),
+                backend=target,
+                precision=kernel_eval.get_torch_dtype_from_string(precision),
+                check_for_excessive_speedup=True,
+                excessive_speedup_threshold=excessive_speedup_threshold,
+            )
+    except Exception as error:
+        return _result(
+            cell_id=cell_id,
+            backend=target,
+            precision=precision,
+            status="harness_error",
+            started_at=started_at,
+            static_errors=static_errors,
+            static_warnings=static_warnings,
+            metadata={"runtime_environment": runtime_metadata},
+            error=f"{type(error).__name__}: {error}",
+        )
+    if execution is None:
+        return _result(
+            cell_id=cell_id,
+            backend=target,
+            precision=precision,
+            status="harness_error",
+            started_at=started_at,
+            static_errors=static_errors,
+            static_warnings=static_warnings,
+            metadata={"runtime_environment": runtime_metadata},
+            error="KernelBench returned no execution result",
+        )
+    kernel_runtime = execution.runtime if execution.runtime > 0 else None
+    reference_runtime = execution.ref_runtime if execution.ref_runtime > 0 else None
+    return _result(
+        cell_id=cell_id,
+        backend=target,
+        precision=precision,
+        status="evaluated",
+        started_at=started_at,
+        compiled=execution.compiled,
+        correctness=execution.correctness,
+        kernel_runtime_ms=kernel_runtime,
+        reference_runtime_ms=reference_runtime,
+        static_errors=static_errors,
+        static_warnings=static_warnings,
+        metadata={
+            **_json_safe(execution.metadata),
+            "runtime_environment": runtime_metadata,
+        },
+    )
+
+
+def evaluate_kernelbench_task_candidate(
+    *,
+    cell_id: str,
+    task_level: int,
+    problem_id: int,
+    target: TargetName,
+    precision: Precision,
+    candidate_source: str,
+    kernelbench_root: str | Path,
+    device: str,
+    num_correct_trials: int,
+    num_perf_trials: int,
+    timing_method: str,
+    excessive_speedup_threshold: float,
+    static_check: bool,
+) -> EvaluationResult:
+    """Load a KernelBench task and evaluate a candidate against its reference."""
+
+    started_at = datetime.now(timezone.utc)
+    try:
+        reference_source = load_kernelbench_reference(
+            kernelbench_root,
+            task_level=task_level,
+            problem_id=problem_id,
+        )
+    except (OSError, ValueError) as error:
+        return _result(
+            cell_id=cell_id,
+            backend=target,
+            precision=precision,
+            status="harness_error",
+            started_at=started_at,
+            metadata={"python_version": platform.python_version(), "device": device},
+            error=f"cannot load KernelBench reference: {type(error).__name__}: {error}",
+        )
+    return evaluate_candidate_source(
+        cell_id=cell_id,
+        target=target,
+        precision=precision,
+        reference_source=reference_source,
+        candidate_source=candidate_source,
+        kernelbench_root=kernelbench_root,
+        device=device,
+        num_correct_trials=num_correct_trials,
+        num_perf_trials=num_perf_trials,
+        timing_method=timing_method,
+        excessive_speedup_threshold=excessive_speedup_threshold,
+        static_check=static_check,
+    )
+
+
 def evaluate_cell(
     cell_directory: str | Path,
     kernelbench_root: str | Path,
@@ -110,116 +339,21 @@ def evaluate_cell(
 ) -> EvaluationResult:
     directory = Path(cell_directory)
     spec = CellSpec.model_validate(json.loads((directory / "cell.json").read_text()))
-    started_at = datetime.now(timezone.utc)
-    base_metadata = {"python_version": platform.python_version(), "device": device}
-    try:
-        root = Path(kernelbench_root).resolve()
-        sys.path.insert(0, str(root / "src"))
-        import torch
-        from kernelbench import eval as kernel_eval
-        from kernelbench.kernel_static_checker import validate_kernel_static
-    except Exception as error:
-        return _result(
-            spec=spec,
-            status="environment_error",
-            started_at=started_at,
-            metadata=base_metadata,
-            error=f"{type(error).__name__}: {error}",
-        )
-
-    runtime_metadata = _runtime_metadata(torch, device)
-    if not torch.cuda.is_available():
-        return _result(
-            spec=spec,
-            status="environment_error",
-            started_at=started_at,
-            metadata={"runtime_environment": runtime_metadata},
-            error="CUDA is not available",
-        )
-
-    reference = (directory / "reference.py").read_text(encoding="utf-8")
-    candidate = (directory / "candidate.py").read_text(encoding="utf-8")
-    static_errors: tuple[str, ...] = ()
-    static_warnings: tuple[str, ...] = ()
-    if static_check:
-        try:
-            valid, errors, warnings = validate_kernel_static(
-                candidate,
-                backend=spec.target,
-                precision=spec.precision,
-            )
-            static_errors = tuple(str(item) for item in errors)
-            static_warnings = tuple(str(item) for item in warnings)
-        except Exception as error:
-            return _result(
-                spec=spec,
-                status="harness_error",
-                started_at=started_at,
-                metadata={"runtime_environment": runtime_metadata},
-                error=f"static checker failed: {type(error).__name__}: {error}",
-            )
-        if not valid:
-            return _result(
-                spec=spec,
-                status="static_check_failed",
-                started_at=started_at,
-                static_errors=static_errors,
-                static_warnings=static_warnings,
-                metadata={"runtime_environment": runtime_metadata},
-            )
-
-    try:
-        with contextlib.redirect_stdout(sys.stderr):
-            execution = kernel_eval.eval_kernel_against_ref(
-                original_model_src=reference,
-                custom_model_src=candidate,
-                num_correct_trials=num_correct_trials,
-                num_perf_trials=num_perf_trials,
-                measure_performance=True,
-                timing_method=timing_method,
-                verbose=False,
-                device=torch.device(device),
-                backend=spec.target,
-                precision=kernel_eval.get_torch_dtype_from_string(spec.precision),
-                check_for_excessive_speedup=True,
-                excessive_speedup_threshold=excessive_speedup_threshold,
-            )
-    except Exception as error:
-        return _result(
-            spec=spec,
-            status="harness_error",
-            started_at=started_at,
-            static_errors=static_errors,
-            static_warnings=static_warnings,
-            metadata={"runtime_environment": runtime_metadata},
-            error=f"{type(error).__name__}: {error}",
-        )
-    if execution is None:
-        return _result(
-            spec=spec,
-            status="harness_error",
-            started_at=started_at,
-            static_errors=static_errors,
-            static_warnings=static_warnings,
-            metadata={"runtime_environment": runtime_metadata},
-            error="KernelBench returned no execution result",
-        )
-    kernel_runtime = execution.runtime if execution.runtime > 0 else None
-    reference_runtime = execution.ref_runtime if execution.ref_runtime > 0 else None
-    return _result(
-        spec=spec,
-        status="evaluated",
-        started_at=started_at,
-        compiled=execution.compiled,
-        correctness=execution.correctness,
-        kernel_runtime_ms=kernel_runtime,
-        reference_runtime_ms=reference_runtime,
-        static_errors=static_errors,
-        static_warnings=static_warnings,
-        metadata={
-            **_json_safe(execution.metadata),
-            "runtime_environment": runtime_metadata,
-        },
+    reference_source = (directory / "reference.py").read_text(encoding="utf-8")
+    candidate_source = (directory / "candidate.py").read_text(encoding="utf-8")
+    return evaluate_candidate_source(
+        cell_id=spec.cell_id,
+        target=spec.target,
+        precision=spec.precision,
+        reference_source=reference_source,
+        candidate_source=candidate_source,
+        kernelbench_root=kernelbench_root,
+        device=device,
+        num_correct_trials=num_correct_trials,
+        num_perf_trials=num_perf_trials,
+        timing_method=timing_method,
+        excessive_speedup_threshold=excessive_speedup_threshold,
+        static_check=static_check,
     )
 
 
