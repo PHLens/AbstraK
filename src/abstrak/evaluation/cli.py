@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -22,8 +23,27 @@ from abstrak.config import (
     resolve_path,
     runtime_environment,
 )
+from abstrak.evaluation.agent_analysis import AgentAnalysisError, analyze_agent_run
+from abstrak.evaluation.agent_contracts import (
+    KernelBenchAgentStudy,
+    load_agent_study,
+)
+from abstrak.evaluation.agent_figures import AgentFigureError, plot_agent_run
+from abstrak.evaluation.agent_provider import AgentProviderError, PilotProviderClient
+from abstrak.evaluation.agent_runner import (
+    AgentCollectionError,
+    AgentCollectionResult,
+    AgentCollectionRunner,
+    AgentEvaluationTransportError,
+    SshAgentEvaluator,
+)
+from abstrak.evaluation.agent_worker import AgentEvaluationJob
 from abstrak.evaluation.artifacts import EvaluationArtifactError
-from abstrak.evaluation.contracts import StudyError, load_study
+from abstrak.evaluation.contracts import (
+    KernelBenchEvaluatorConfig,
+    StudyError,
+    load_study,
+)
 from abstrak.evaluation.evaluator import evaluate_run
 from abstrak.evaluation.generation import NaiveGenerationRunner
 from abstrak.evaluation.kernelbench import KernelBenchCheckout, prompt_sha256
@@ -36,6 +56,7 @@ EXIT_OK = 0
 EXIT_CONFIG = 2
 EXIT_GENERATION = 3
 EXIT_EVALUATION = 4
+EXIT_AGENT = 5
 
 
 def _emit(value: object) -> None:
@@ -52,6 +73,53 @@ def _add_study_inputs(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--config",
         help=f"user config YAML (default: ${CONFIG_ENV} or ~/.abstrak/config.yaml)",
+    )
+
+
+def _add_remote_worker_inputs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--ssh-host", required=True, help="SSH destination for the GPU worker")
+    parser.add_argument("--ssh-port", type=int, help="SSH port (default: OpenSSH config)")
+    parser.add_argument(
+        "--worker-root",
+        required=True,
+        help="AbstraK repository path on the GPU worker",
+    )
+    parser.add_argument(
+        "--worker-python",
+        default="/tmp/abstrak-gpu-venv/bin/python",
+        help="Python executable on the GPU worker",
+    )
+    parser.add_argument(
+        "--worker-kernelbench-root",
+        required=True,
+        help="KernelBench checkout path on the GPU worker",
+    )
+    parser.add_argument("--device", default="cuda:0")
+
+
+def _add_agent_collection_inputs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--study", required=True, help="agent pilot study YAML")
+    parser.add_argument(
+        "--kernelbench-root",
+        default=os.environ.get(KERNELBENCH_ROOT_ENV),
+        help=f"local pinned KernelBench checkout (default: ${KERNELBENCH_ROOT_ENV})",
+    )
+    parser.add_argument(
+        "--auth",
+        help=f"credential JSON (default: ${AUTH_ENV} or ~/.abstrak/auth.json)",
+    )
+    _add_remote_worker_inputs(parser)
+    parser.add_argument("--iterations", type=int, help="override the study's agent turns")
+    parser.add_argument("--run-id", help="run directory name")
+    parser.add_argument(
+        "--artifact-root",
+        default="artifacts/kernelbench-agent",
+        help="root for raw attempts, analysis, and figures",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="acknowledge model requests and execution of generated code over SSH",
     )
 
 
@@ -108,6 +176,53 @@ def _parser() -> argparse.ArgumentParser:
         "summarize", help="aggregate correctness and speed ratios by profile and target"
     )
     summarize.add_argument("--run", required=True, help="evaluated study run directory")
+
+    agent_eval = subparsers.add_parser(
+        "agent-eval", help="evaluate one candidate on a remote KernelBench worker"
+    )
+    agent_eval.add_argument("--candidate", required=True, help="candidate Python source")
+    agent_eval.add_argument(
+        "--task",
+        required=True,
+        help="KernelBench task such as level1:1 or level2:76",
+    )
+    agent_eval.add_argument(
+        "--target", required=True, choices=("triton", "tilelang", "cute")
+    )
+    agent_eval.add_argument(
+        "--precision", default="fp16", choices=("fp16", "bf16", "fp32")
+    )
+    _add_remote_worker_inputs(agent_eval)
+    agent_eval.add_argument("--num-correct-trials", type=int, default=5)
+    agent_eval.add_argument("--num-perf-trials", type=int, default=100)
+    agent_eval.add_argument(
+        "--timing-method",
+        default="cuda_event",
+        choices=("cuda_event", "do_bench", "do_bench_impl", "host_time"),
+    )
+    agent_eval.add_argument("--timeout-seconds", type=int, default=300)
+    agent_eval.add_argument("--excessive-speedup-threshold", type=float, default=10.0)
+    agent_eval.add_argument("--no-static-check", action="store_true")
+
+    agent_collect = subparsers.add_parser(
+        "agent-collect", help="run model turns with immediate KernelBench feedback"
+    )
+    _add_agent_collection_inputs(agent_collect)
+
+    agent_analyze = subparsers.add_parser(
+        "agent-analyze", help="derive metrics from raw agent attempts"
+    )
+    agent_analyze.add_argument("--run", required=True, help="agent run directory")
+
+    agent_plot = subparsers.add_parser(
+        "agent-plot", help="render the two pilot figures from derived metrics"
+    )
+    agent_plot.add_argument("--run", required=True, help="analyzed agent run directory")
+
+    agent_pipeline = subparsers.add_parser(
+        "agent-pipeline", help="collect, analyze, and plot in one command"
+    )
+    _add_agent_collection_inputs(agent_pipeline)
     return parser
 
 
@@ -227,6 +342,140 @@ def _summarize(arguments: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _parse_agent_task(value: str) -> tuple[int, int]:
+    match = re.fullmatch(r"(?:level)?(?P<level>[1-4])(?::|-problem)(?P<problem>[1-9][0-9]*)", value)
+    if match is None:
+        raise StudyError("--task must look like level1:1 or level2-problem76")
+    return int(match.group("level")), int(match.group("problem"))
+
+
+def _ssh_evaluator(arguments: argparse.Namespace) -> SshAgentEvaluator:
+    return SshAgentEvaluator(
+        host=arguments.ssh_host,
+        port=arguments.ssh_port,
+        worker_root=arguments.worker_root,
+        worker_python=arguments.worker_python,
+    )
+
+
+def _agent_eval(arguments: argparse.Namespace) -> int:
+    level, problem_id = _parse_agent_task(arguments.task)
+    candidate = Path(arguments.candidate).expanduser().read_text(encoding="utf-8")
+    evaluator_config = KernelBenchEvaluatorConfig(
+        num_correct_trials=arguments.num_correct_trials,
+        num_perf_trials=arguments.num_perf_trials,
+        timing_method=arguments.timing_method,
+        timeout_seconds=arguments.timeout_seconds,
+        excessive_speedup_threshold=arguments.excessive_speedup_threshold,
+        static_check=not arguments.no_static_check,
+    )
+    job = AgentEvaluationJob(
+        cell_id=f"agent-eval--level{level}-problem{problem_id}--{arguments.target}",
+        task_level=level,
+        problem_id=problem_id,
+        target=arguments.target,
+        precision=arguments.precision,
+        candidate_source=candidate,
+        kernelbench_root=arguments.worker_kernelbench_root,
+        device=arguments.device,
+        evaluator=evaluator_config,
+    )
+    outcome = _ssh_evaluator(arguments).evaluate(job)
+    _emit(
+        {
+            "status": "complete",
+            "evaluation": outcome.result.model_dump(mode="json"),
+            "worker_log": outcome.log,
+        }
+    )
+    return EXIT_OK
+
+
+def _collect_agent(
+    arguments: argparse.Namespace,
+) -> tuple[KernelBenchAgentStudy, AgentCollectionResult]:
+    if not arguments.live:
+        raise StudyError(
+            f"{arguments.command} requires --live because it calls models and executes "
+            "generated code"
+        )
+    study = load_agent_study(arguments.study)
+    checkout = KernelBenchCheckout(_require_checkout(arguments.kernelbench_root), study.source)
+    auth_path, configured = resolve_path(
+        arguments.auth,
+        environment_name=AUTH_ENV,
+        default=default_auth_path(),
+    )
+    auth = load_auth_store(auth_path, missing_ok=not configured)
+    environment = runtime_environment(auth, os.environ)
+    runner = AgentCollectionRunner(
+        study=study,
+        checkout=checkout,
+        provider_factory=lambda model: PilotProviderClient(
+            model,
+            study.generation,
+            environment=environment,
+        ),
+        evaluator=_ssh_evaluator(arguments),
+        worker_kernelbench_root=arguments.worker_kernelbench_root,
+        artifact_root=arguments.artifact_root,
+        run_id=arguments.run_id,
+        iterations=arguments.iterations,
+        device=arguments.device,
+    )
+    return study, runner.run()
+
+
+def _agent_collect(arguments: argparse.Namespace) -> int:
+    study, result = _collect_agent(arguments)
+    _emit(
+        {
+            "status": "complete",
+            "study_id": study.id,
+            **result.model_dump(mode="json"),
+        }
+    )
+    return EXIT_OK
+
+
+def _agent_analyze(arguments: argparse.Namespace) -> int:
+    metrics, metrics_json, metrics_csv = analyze_agent_run(arguments.run)
+    _emit(
+        {
+            "status": "complete",
+            "run_id": metrics["run_id"],
+            "metrics_json": str(metrics_json),
+            "metrics_csv": str(metrics_csv),
+        }
+    )
+    return EXIT_OK
+
+
+def _agent_plot(arguments: argparse.Namespace) -> int:
+    paths = plot_agent_run(arguments.run)
+    _emit({"status": "complete", "figures": [str(path) for path in paths]})
+    return EXIT_OK
+
+
+def _agent_pipeline(arguments: argparse.Namespace) -> int:
+    study, collection = _collect_agent(arguments)
+    metrics, metrics_json, metrics_csv = analyze_agent_run(collection.run_directory)
+    figures = plot_agent_run(collection.run_directory)
+    _emit(
+        {
+            "status": "complete",
+            "study_id": study.id,
+            "run_id": metrics["run_id"],
+            "run_directory": str(collection.run_directory),
+            "attempts": collection.attempts,
+            "metrics_json": str(metrics_json),
+            "metrics_csv": str(metrics_csv),
+            "figures": [str(path) for path in figures],
+        }
+    )
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     arguments = parser.parse_args(argv)
@@ -237,7 +486,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _generate(arguments)
         if arguments.command == "evaluate":
             return _evaluate(arguments)
-        return _summarize(arguments)
+        if arguments.command == "summarize":
+            return _summarize(arguments)
+        if arguments.command == "agent-eval":
+            return _agent_eval(arguments)
+        if arguments.command == "agent-collect":
+            return _agent_collect(arguments)
+        if arguments.command == "agent-analyze":
+            return _agent_analyze(arguments)
+        if arguments.command == "agent-plot":
+            return _agent_plot(arguments)
+        return _agent_pipeline(arguments)
+    except (
+        AgentAnalysisError,
+        AgentCollectionError,
+        AgentEvaluationTransportError,
+        AgentFigureError,
+        AgentProviderError,
+    ) as error:
+        print(f"agent error: {error}", file=sys.stderr)
+        return EXIT_AGENT
     except (
         ConfigurationError,
         EvaluationArtifactError,

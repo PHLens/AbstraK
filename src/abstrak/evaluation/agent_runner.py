@@ -555,7 +555,10 @@ class AgentCollectionRunner:
         }
         _write_json(raw / "run.json", run_payload)
 
-        clients = {model.id: self.provider_factory(model) for model in self.study.models}
+        try:
+            clients = {model.id: self.provider_factory(model) for model in self.study.models}
+        except (OSError, ValueError) as error:
+            raise AgentCollectionError(f"cannot initialize provider clients: {error}") from error
         records: list[AgentAttemptRecord] = []
         for model in self.study.models:
             for task in self.study.tasks:
