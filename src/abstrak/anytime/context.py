@@ -34,6 +34,7 @@ _TRUNCATION_MARKER = "...[truncated]"
 FeedbackStatus = Literal[
     "eligible",
     "ineligible",
+    "qualification_pending",
     "parse_failure",
     "oversize_source",
     "duplicate_source",
@@ -181,6 +182,10 @@ def _validate_feedback_facts(
         raise ValueError("timing-unstable feedback requires a compiled, correct candidate")
     if status == "ineligible" and (compiled is not True or correct is not True):
         raise ValueError("ineligible feedback requires a compiled, correct candidate")
+    if status == "qualification_pending" and (
+        compiled is not None or correct is not None or median_latency_ms is not None
+    ):
+        raise ValueError("qualification-pending feedback cannot assert execution facts")
     if status == "wrong_result" and correct is not False:
         raise ValueError("wrong-result feedback requires correct=false")
     if status == "compile_error" and compiled is not False:

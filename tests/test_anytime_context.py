@@ -260,6 +260,13 @@ def test_first_call_rejects_nonempty_reconstructed_state(state_name: str) -> Non
             },
             "latency feedback",
         ),
+        (
+            {
+                "status": "qualification_pending",
+                "compiled": False,
+            },
+            "qualification-pending feedback",
+        ),
     ),
 )
 def test_feedback_rejects_contradictory_facts(kwargs: dict[str, object], message: str) -> None:

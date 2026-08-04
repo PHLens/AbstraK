@@ -45,6 +45,7 @@ TerminalStatus = Literal["complete", "early_resource_cap", "infrastructure_censo
 CandidateStage = Literal[
     "provider_error",
     "parse_failure",
+    "qualification_pending",
     "static_check_failure",
     "compile_failure",
     "wrong_result",
@@ -338,6 +339,17 @@ class AnytimeAnalysisDataset(AnytimeModel):
     spec: AnytimeAnalysisSpec
     floors: tuple[AnytimeFloorArtifact, ...]
     trajectories: tuple[AnytimeTrajectoryArtifact, ...]
+
+    @model_validator(mode="after")
+    def pending_qualification_is_synthetic_only(self) -> AnytimeAnalysisDataset:
+        has_pending = any(
+            turn.candidate_stage == "qualification_pending"
+            for trajectory in self.trajectories
+            for turn in trajectory.turns
+        )
+        if has_pending and self.spec.study_stage != "synthetic_fixture":
+            raise ValueError("qualification-pending turns are restricted to synthetic fixtures")
+        return self
 
     @property
     def sha256(self) -> str:

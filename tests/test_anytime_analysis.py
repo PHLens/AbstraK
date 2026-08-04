@@ -255,6 +255,36 @@ def test_rates_use_planned_denominator_and_keep_checkpoint_identity() -> None:
     assert agent_b_call4.formal_checkpoint is True
 
 
+def test_offline_qualification_pending_is_not_compiled_or_correct() -> None:
+    turn = AnytimeTurnArtifact(
+        scientific_call_index=1,
+        cumulative_wall_seconds=0.02,
+        candidate_stage="qualification_pending",
+    )
+
+    assert turn.compiled is False
+    assert turn.correct is False
+    assert turn.qualified is False
+    assert turn.eligible is False
+
+
+def test_pending_qualification_cannot_enter_non_synthetic_analysis() -> None:
+    trajectory = _trajectory("agent-a", WORKLOADS[0], TARGETS[0], 1)
+    turns = list(trajectory.turns)
+    turns[0] = AnytimeTurnArtifact(
+        scientific_call_index=1,
+        cumulative_wall_seconds=10.0,
+        candidate_stage="qualification_pending",
+    )
+    pending = trajectory.model_copy(update={"turns": tuple(turns)})
+    with pytest.raises(ValueError, match="synthetic fixtures"):
+        AnytimeAnalysisDataset(
+            spec=_spec().model_copy(update={"study_stage": "formal"}),
+            floors=_dataset().floors,
+            trajectories=(pending,),
+        )
+
+
 def test_iteration_winners_cover_crossover_dominance_tie_and_model_dependence() -> None:
     report = build_anytime_analysis(_dataset())
 

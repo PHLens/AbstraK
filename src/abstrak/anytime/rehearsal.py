@@ -9,6 +9,7 @@ executed, and no provider client, credential, network, SSH, or GPU API is used.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
@@ -34,9 +35,11 @@ from abstrak.anytime.analysis import (
 )
 from abstrak.anytime.artifacts import (
     AnytimeAttemptAudit,
+    AnytimeAttemptHeader,
     AnytimeAttemptIdentity,
     AnytimeAttemptWriter,
     AnytimeInjectedCrash,
+    AnytimePersistedProviderObservation,
     AnytimeWorkerEvaluationArtifact,
     audit_anytime_attempt,
     create_anytime_retry,
@@ -80,8 +83,8 @@ from abstrak.anytime.isolation import (
     build_anytime_process_isolation_contract,
 )
 from abstrak.anytime.ledger import (
-    AnytimeIneligibleCandidate,
     AnytimeLedgerHeader,
+    AnytimeQualificationPending,
     AnytimeTurnRecord,
     build_anytime_ledger_header,
     prepare_anytime_turn,
@@ -131,6 +134,7 @@ FLOOR_VALIDATION_FILENAME = "floor-validation.json"
 ANALYSIS_DIRECTORY = "analysis"
 QUALIFICATION_DIRECTORY = "qualifications"
 FAKE_PROVIDER_WARNING = "offline scripted fixture; no provider request was performed"
+QualificationKey = tuple[str, int, int]
 
 _SHA256 = re.compile(SHA256_PATTERN)
 
@@ -197,12 +201,19 @@ class AnytimeRehearsalError(ValueError):
 
 
 class AnytimeOfflineQualificationFixture(AnytimeModel):
-    schema_version: Literal["abstrak-anytime-offline-qualification-fixture.v1"] = (
-        "abstrak-anytime-offline-qualification-fixture.v1"
+    schema_version: Literal["abstrak-anytime-offline-qualification-fixture.v2"] = (
+        "abstrak-anytime-offline-qualification-fixture.v2"
     )
     evidence_scope: Literal["offline_synthetic_fixture"] = REHEARSAL_STUDY_SCOPE
+    agent_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    workload_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    trajectory_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    infrastructure_attempt_index: int = Field(ge=1, le=2)
+    trajectory_execution_sha256: str = Field(pattern=SHA256_PATTERN)
     target_id: str = Field(pattern=IDENTIFIER_PATTERN)
     scientific_call_index: int = Field(ge=1, le=4)
+    logical_request_sha256: str = Field(pattern=SHA256_PATTERN)
+    provider_observation_sha256: str = Field(pattern=SHA256_PATTERN)
     invocation: AnytimeCandidateInvocation
     binding: AnytimeCandidateQualificationBinding
     isolation_contract: AnytimeProcessIsolationContract
@@ -218,6 +229,19 @@ class AnytimeOfflineQualificationFixture(AnytimeModel):
             raise ValueError("qualification fixture target differs from its binding")
         if self.invocation.sha256 != self.binding.candidate_invocation_sha256:
             raise ValueError("qualification fixture invocation differs from its binding")
+        if self.binding.execution_binding_sha256 != _qualification_execution_binding_sha256(
+            agent_id=self.agent_id,
+            workload_id=self.workload_id,
+            trajectory_id=self.trajectory_id,
+            infrastructure_attempt_index=self.infrastructure_attempt_index,
+            trajectory_execution_sha256=self.trajectory_execution_sha256,
+            target_id=self.target_id,
+            scientific_call_index=self.scientific_call_index,
+            logical_request_sha256=self.logical_request_sha256,
+            provider_observation_sha256=self.provider_observation_sha256,
+            invocation=self.invocation,
+        ):
+            raise ValueError("qualification fixture execution identity is not fully bound")
         if self.decision.binding_sha256 != self.binding.sha256:
             raise ValueError("qualification decision differs from its binding")
         if self.decision.isolation_contract_sha256 != self.isolation_contract.sha256:
@@ -232,14 +256,17 @@ class AnytimeOfflineQualificationFixture(AnytimeModel):
 
 
 class AnytimeRehearsalArtifactBinding(AnytimeModel):
-    schema_version: Literal["abstrak-anytime-rehearsal-artifact-binding.v1"] = (
-        "abstrak-anytime-rehearsal-artifact-binding.v1"
+    schema_version: Literal["abstrak-anytime-rehearsal-artifact-binding.v2"] = (
+        "abstrak-anytime-rehearsal-artifact-binding.v2"
     )
     relative_path: str
     raw_sha256: str = Field(pattern=SHA256_PATTERN)
     canonical_sha256: str = Field(pattern=SHA256_PATTERN)
+    trajectory_id: str = Field(pattern=IDENTIFIER_PATTERN)
+    infrastructure_attempt_index: int = Field(ge=1, le=2)
     target_id: str = Field(pattern=IDENTIFIER_PATTERN)
     scientific_call_index: int = Field(ge=1, le=4)
+    execution_binding_sha256: str = Field(pattern=SHA256_PATTERN)
 
     @field_validator("relative_path")
     @classmethod
@@ -292,8 +319,8 @@ class AnytimeOfflineSideEffectBoundary(AnytimeModel):
 
 
 class AnytimeOfflineRehearsalReceipt(AnytimeModel):
-    schema_version: Literal["abstrak-anytime-offline-rehearsal-receipt.v1"] = (
-        "abstrak-anytime-offline-rehearsal-receipt.v1"
+    schema_version: Literal["abstrak-anytime-offline-rehearsal-receipt.v2"] = (
+        "abstrak-anytime-offline-rehearsal-receipt.v2"
     )
     rehearsal_id: Literal["anytime-dsl-a100-m8-full-shakeout-fixture"] = (
         "anytime-dsl-a100-m8-full-shakeout-fixture"
@@ -319,11 +346,11 @@ class AnytimeOfflineRehearsalReceipt(AnytimeModel):
     phase_receipts: tuple[AnytimeOfflinePhaseReceipt, ...] = Field(min_length=24, max_length=24)
     phase_receipt_bundle_sha256: str = Field(pattern=SHA256_PATTERN)
     qualifications: tuple[AnytimeRehearsalArtifactBinding, ...] = Field(
-        min_length=12,
-        max_length=12,
+        min_length=192,
+        max_length=192,
     )
     qualification_bundle_sha256: str = Field(pattern=SHA256_PATTERN)
-    pending_m9_qualification_count: Literal[12] = 12
+    pending_m9_qualification_count: Literal[192] = 192
     floor_validation_raw_sha256: str = Field(pattern=SHA256_PATTERN)
     floor_validation_sha256: str = Field(pattern=SHA256_PATTERN)
     floor_gate: Literal["invalid_floor"] = "invalid_floor"
@@ -348,7 +375,7 @@ class AnytimeOfflineRehearsalReceipt(AnytimeModel):
             ("responses", 96),
         ):
             raise ValueError("scripted provider protocol counts differ from the full shakeout")
-        if self.candidate_outcome_counts != (("ineligible", 192),):
+        if self.candidate_outcome_counts != (("qualification_pending", 192),):
             raise ValueError("scripted candidate outcomes differ from the frozen fixture")
         if self.terminal_counts != (("infrastructure_failure", 1), ("success", 48)):
             raise ValueError("attempt terminal counts differ from crash/retry fixture")
@@ -356,6 +383,9 @@ class AnytimeOfflineRehearsalReceipt(AnytimeModel):
             raise ValueError("phase receipt bundle hash mismatch")
         if self.qualification_bundle_sha256 != _model_sequence_sha256(self.qualifications):
             raise ValueError("qualification bundle hash mismatch")
+        qualification_paths = tuple(item.relative_path for item in self.qualifications)
+        if qualification_paths != tuple(sorted(set(qualification_paths))):
+            raise ValueError("qualification bindings must be path-sorted and unique")
         if self.m9_blockers != M9_BLOCKERS:
             raise ValueError("offline rehearsal M9 blockers differ from the freeze")
         return self
@@ -431,6 +461,35 @@ def _safe_relative_path(value: str) -> str:
     ):
         raise ValueError("must be a safe relative POSIX path")
     return value
+
+
+def _assert_offline_rehearsal_source() -> None:
+    """Reject accidental live/GPU imports or dynamic candidate execution in this module."""
+
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    forbidden_import_roots = {
+        "cutlass",
+        "litellm",
+        "paramiko",
+        "socket",
+        "subprocess",
+        "tilelang",
+        "torch",
+        "triton",
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported = (alias.name.split(".", 1)[0] for alias in node.names)
+            if any(name in forbidden_import_roots for name in imported):
+                raise AnytimeRehearsalError("offline rehearsal source imports a live or GPU module")
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".", 1)[0]
+            if root in forbidden_import_roots:
+                raise AnytimeRehearsalError("offline rehearsal source imports a live or GPU module")
+        elif isinstance(node, ast.Call):
+            function = node.func
+            if isinstance(function, ast.Name) and function.id in {"compile", "eval", "exec"}:
+                raise AnytimeRehearsalError("offline rehearsal source executes dynamic code")
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -549,22 +608,60 @@ def _fixture_invocation(
     )
 
 
+def _qualification_execution_binding_sha256(
+    *,
+    agent_id: str,
+    workload_id: str,
+    trajectory_id: str,
+    infrastructure_attempt_index: int,
+    trajectory_execution_sha256: str,
+    target_id: str,
+    scientific_call_index: int,
+    logical_request_sha256: str,
+    provider_observation_sha256: str,
+    invocation: AnytimeCandidateInvocation,
+) -> str:
+    return sha256_json(
+        {
+            "schema_version": "offline-fixture-execution-binding.v2",
+            "agent_id": agent_id,
+            "workload_id": workload_id,
+            "trajectory_id": trajectory_id,
+            "infrastructure_attempt_index": infrastructure_attempt_index,
+            "trajectory_execution_sha256": trajectory_execution_sha256,
+            "target_id": target_id,
+            "scientific_call_index": scientific_call_index,
+            "logical_request_sha256": logical_request_sha256,
+            "provider_observation_sha256": provider_observation_sha256,
+            "candidate_source_sha256": invocation.source.source_sha256,
+            "output_channel_id": invocation.output_channel.channel_id,
+        }
+    )
+
+
 def _qualification_fixture(
     *,
     inputs: PinnedAnytimeWorkloadInputs,
-    target_id: str,
+    cell: AnytimeScheduleCell,
+    identity: AnytimeAttemptIdentity,
     scientific_call_index: int,
+    logical_request_sha256: str,
+    provider_observation_sha256: str,
+    source: str,
 ) -> AnytimeOfflineQualificationFixture:
-    source = _target_source(target_id, scientific_call_index)
-    invocation = _fixture_invocation(target_id=target_id, source=source)
-    card = inputs.manifest.target_card(target_id)
-    execution_binding = sha256_json(
-        {
-            "schema_version": "offline-fixture-execution-binding.v1",
-            "target_id": target_id,
-            "scientific_call_index": scientific_call_index,
-            "candidate_source_sha256": invocation.source.source_sha256,
-        }
+    invocation = _fixture_invocation(target_id=cell.target_id, source=source)
+    card = inputs.manifest.target_card(cell.target_id)
+    execution_binding = _qualification_execution_binding_sha256(
+        agent_id=cell.agent_id,
+        workload_id=cell.task_id,
+        trajectory_id=identity.trajectory_id,
+        infrastructure_attempt_index=identity.infrastructure_attempt_index,
+        trajectory_execution_sha256=identity.trajectory_execution_sha256,
+        target_id=cell.target_id,
+        scientific_call_index=scientific_call_index,
+        logical_request_sha256=logical_request_sha256,
+        provider_observation_sha256=provider_observation_sha256,
+        invocation=invocation,
     )
     binding = build_anytime_qualification_binding(
         invocation=invocation,
@@ -595,10 +692,10 @@ def _qualification_fixture(
         execution_binding_sha256=binding.execution_binding_sha256,
         runtime_launch_count=1,
         launched_kernel_sha256=sha256_json(
-            {"fixture": "launch", "target": target_id, "call": scientific_call_index}
+            {"fixture": "launch", "execution_binding": execution_binding}
         ),
         lowered_code_sha256=sha256_json(
-            {"fixture": "lowered", "target": target_id, "call": scientific_call_index}
+            {"fixture": "lowered", "execution_binding": execution_binding}
         ),
         core_operation_attributed=True,
         fallback_detected=False,
@@ -609,7 +706,9 @@ def _qualification_fixture(
         "tilelang-a100": AnytimeTileLangSyntheticLaunchPayload,
         "cute-a100": AnytimeCuteSyntheticLaunchPayload,
     }
-    attestation = attest_anytime_synthetic_launch(payload_type[target_id](**payload_fields))
+    attestation = attest_anytime_synthetic_launch(
+        payload_type[cell.target_id](**payload_fields)
+    )
     decision = qualify_anytime_candidate_offline(
         binding=binding,
         invocation=invocation,
@@ -618,8 +717,15 @@ def _qualification_fixture(
         launch_attestation=attestation,
     )
     return AnytimeOfflineQualificationFixture(
-        target_id=target_id,
+        agent_id=cell.agent_id,
+        workload_id=cell.task_id,
+        trajectory_id=identity.trajectory_id,
+        infrastructure_attempt_index=identity.infrastructure_attempt_index,
+        trajectory_execution_sha256=identity.trajectory_execution_sha256,
+        target_id=cell.target_id,
         scientific_call_index=scientific_call_index,
+        logical_request_sha256=logical_request_sha256,
+        provider_observation_sha256=provider_observation_sha256,
         invocation=invocation,
         binding=binding,
         isolation_contract=isolation,
@@ -629,8 +735,15 @@ def _qualification_fixture(
     )
 
 
-def _qualification_path(target_id: str, scientific_call_index: int) -> str:
-    return f"{QUALIFICATION_DIRECTORY}/{target_id}/call-{scientific_call_index:02d}.json"
+def _qualification_path(
+    trajectory_id: str,
+    infrastructure_attempt_index: int,
+    scientific_call_index: int,
+) -> str:
+    return (
+        f"{QUALIFICATION_DIRECTORY}/{trajectory_id}/"
+        f"attempt-{infrastructure_attempt_index:02d}/call-{scientific_call_index:02d}.json"
+    )
 
 
 def _phase_prompt(
@@ -794,16 +907,53 @@ def _fake_native_response(
     )
 
 
+def _fake_worker_artifact(
+    *,
+    provider: AnytimePersistedProviderObservation,
+    cell: AnytimeScheduleCell,
+    scientific_call_index: int,
+    source: str,
+    qualification_raw_sha256: str,
+) -> AnytimeWorkerEvaluationArtifact:
+    return AnytimeWorkerEvaluationArtifact(
+        provider_observation_sha256=provider.sha256,
+        evaluator_id="offline-scripted-worker-v2",
+        evaluator_execution_sha256=sha256_json(
+            {
+                "schema_version": "offline-scripted-worker.v2",
+                "trajectory_id": cell.trajectory_id,
+                "logical_request_sha256": provider.observation.logical_request_sha256,
+                "target_id": cell.target_id,
+                "scientific_call_index": scientific_call_index,
+                "candidate_source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+                "qualification_raw_sha256": qualification_raw_sha256,
+            }
+        ),
+        candidate=AnytimeQualificationPending(
+            source=AnytimeSourceSnapshot.from_source(source),
+            diagnostics=(
+                "offline synthetic worker only; compile, correctness, and target use remain "
+                "pending M9",
+            ),
+        ),
+        observed_wall_seconds=0.02,
+        qualification_artifact_sha256=qualification_raw_sha256,
+    )
+
+
 def _complete_scripted_attempt(
     writer: AnytimeAttemptWriter,
     *,
+    rehearsal_root: Path,
+    inputs: PinnedAnytimeWorkloadInputs,
     cell: AnytimeScheduleCell,
     loop: AnytimeLoopPolicy,
     base_prompt: tuple[Any, ...],
     bundle: NativeManifestBundle,
     freeze: AnytimeOfflineFreezeManifest,
-    qualification_fixtures: dict[tuple[str, int], AnytimeOfflineQualificationFixture],
-    qualification_raw_hashes: dict[tuple[str, int], str],
+    qualification_fixtures: dict[QualificationKey, AnytimeOfflineQualificationFixture],
+    qualification_raw_hashes: dict[QualificationKey, str],
+    qualification_bindings: list[AnytimeRehearsalArtifactBinding],
 ) -> AnytimeAttemptAudit:
     records: tuple[AnytimeTurnRecord, ...] = ()
     checkpoints: tuple[Any, ...] = ()
@@ -816,8 +966,7 @@ def _complete_scripted_attempt(
             checkpoints=checkpoints,
         )
         call = prepared.scientific_call_index
-        fixture = qualification_fixtures[(cell.target_id, call)]
-        source = fixture.invocation.source.text
+        source = _target_source(cell.target_id, call)
         writer.persist_dispatch_intent(prepared)
         provider = writer.persist_native_provider_response(
             scientific_call_index=call,
@@ -833,29 +982,49 @@ def _complete_scripted_attempt(
             ),
             observed_wall_seconds=0.01,
         )
-        worker = AnytimeWorkerEvaluationArtifact(
+        identity = writer.header.identity
+        key = (identity.trajectory_id, identity.infrastructure_attempt_index, call)
+        if key in qualification_fixtures:
+            raise AnytimeRehearsalError("duplicate execution-bound qualification fixture")
+        fixture = _qualification_fixture(
+            inputs=inputs,
+            cell=cell,
+            identity=identity,
+            scientific_call_index=call,
+            logical_request_sha256=sha256_json(prepared.logical_request),
             provider_observation_sha256=provider.sha256,
-            evaluator_id="offline-scripted-worker-v1",
-            evaluator_execution_sha256=sha256_json(
-                {
-                    "schema_version": "offline-scripted-worker.v1",
-                    "target_id": cell.target_id,
-                    "scientific_call_index": call,
-                    "candidate_source_sha256": fixture.invocation.source.source_sha256,
-                }
-            ),
-            candidate=AnytimeIneligibleCandidate(
-                reason="target_use_unverified",
-                source=AnytimeSourceSnapshot.from_source(source),
-                compile_seconds=0.0,
-                evaluation_seconds=0.0,
-                gpu_seconds=0.0,
-                diagnostics=(
-                    "offline synthetic worker only; trusted target use remains pending M9",
-                ),
-            ),
-            observed_wall_seconds=0.02,
-            qualification_artifact_sha256=qualification_raw_hashes[(cell.target_id, call)],
+            source=source,
+        )
+        relative_path = _qualification_path(
+            identity.trajectory_id,
+            identity.infrastructure_attempt_index,
+            call,
+        )
+        _, qualification_raw_sha256 = _write_new(
+            rehearsal_root,
+            relative_path,
+            fixture,
+        )
+        qualification_fixtures[key] = fixture
+        qualification_raw_hashes[key] = qualification_raw_sha256
+        qualification_bindings.append(
+            AnytimeRehearsalArtifactBinding(
+                relative_path=relative_path,
+                raw_sha256=qualification_raw_sha256,
+                canonical_sha256=fixture.sha256,
+                trajectory_id=identity.trajectory_id,
+                infrastructure_attempt_index=identity.infrastructure_attempt_index,
+                target_id=cell.target_id,
+                scientific_call_index=call,
+                execution_binding_sha256=fixture.binding.execution_binding_sha256,
+            )
+        )
+        worker = _fake_worker_artifact(
+            provider=provider,
+            cell=cell,
+            scientific_call_index=call,
+            source=source,
+            qualification_raw_sha256=qualification_raw_sha256,
         )
         writer.persist_worker_evaluation(
             scientific_call_index=call,
@@ -933,8 +1102,9 @@ def _run_phase(
     inputs: PinnedAnytimeWorkloadInputs,
     repository_root: Path,
     schedule_sha256: str,
-    qualification_fixtures: dict[tuple[str, int], AnytimeOfflineQualificationFixture],
-    qualification_raw_hashes: dict[tuple[str, int], str],
+    qualification_fixtures: dict[QualificationKey, AnytimeOfflineQualificationFixture],
+    qualification_raw_hashes: dict[QualificationKey, str],
+    qualification_bindings: list[AnytimeRehearsalArtifactBinding],
 ) -> tuple[AnytimeOfflinePhaseReceipt, dict[str, AnytimeAttemptAudit]]:
     first = cells[0]
     study = build_anytime_shakeout_study()
@@ -1062,6 +1232,8 @@ def _run_phase(
             )
         completed = _complete_scripted_attempt(
             writer,
+            rehearsal_root=root,
+            inputs=inputs,
             cell=cell,
             loop=loop,
             base_prompt=base_prompt,
@@ -1069,6 +1241,7 @@ def _run_phase(
             freeze=freeze,
             qualification_fixtures=qualification_fixtures,
             qualification_raw_hashes=qualification_raw_hashes,
+            qualification_bindings=qualification_bindings,
         )
         journal.append_attempt(completed.identity, loop=loop, base_prompt=base_prompt)
         successful[cell.trajectory_id] = completed
@@ -1158,7 +1331,7 @@ def _analysis_dataset(
                         AnytimeTurnArtifact(
                             scientific_call_index=record.scientific_call_index,
                             cumulative_wall_seconds=record.resource_snapshot.wall_seconds,
-                            candidate_stage="target_use_failure",
+                            candidate_stage="qualification_pending",
                         )
                         for record in _load_turn_records(attempt)
                     )
@@ -1271,6 +1444,7 @@ def run_anytime_offline_rehearsal(
 ) -> AnytimeOfflineRehearsalResult:
     """Materialize and verify the full scripted shakeout population offline."""
 
+    _assert_offline_rehearsal_source()
     repository = Path(repository_root).expanduser().resolve(strict=True)
     freeze = verify_anytime_offline_freeze(
         pinned_freeze,
@@ -1297,31 +1471,9 @@ def run_anytime_offline_rehearsal(
     ):
         raise AnytimeRehearsalError("rehearsal workload inputs differ from the freeze")
 
-    qualification_fixtures: dict[
-        tuple[str, int], AnytimeOfflineQualificationFixture
-    ] = {}
-    qualification_raw_hashes: dict[tuple[str, int], str] = {}
+    qualification_fixtures: dict[QualificationKey, AnytimeOfflineQualificationFixture] = {}
+    qualification_raw_hashes: dict[QualificationKey, str] = {}
     qualification_bindings: list[AnytimeRehearsalArtifactBinding] = []
-    for target_id in TARGET_IDS:
-        for call in range(1, 5):
-            fixture = _qualification_fixture(
-                inputs=inputs,
-                target_id=target_id,
-                scientific_call_index=call,
-            )
-            relative_path = _qualification_path(target_id, call)
-            _, raw_sha256 = _write_new(staging, relative_path, fixture)
-            qualification_fixtures[(target_id, call)] = fixture
-            qualification_raw_hashes[(target_id, call)] = raw_sha256
-            qualification_bindings.append(
-                AnytimeRehearsalArtifactBinding(
-                    relative_path=relative_path,
-                    raw_sha256=raw_sha256,
-                    canonical_sha256=fixture.sha256,
-                    target_id=target_id,
-                    scientific_call_index=call,
-                )
-            )
 
     floor_bundle = AnytimeFloorEvidenceBundle(
         input_manifest_sha256=inputs.manifest_sha256
@@ -1376,6 +1528,7 @@ def run_anytime_offline_rehearsal(
                     schedule_sha256=schedule.sha256,
                     qualification_fixtures=qualification_fixtures,
                     qualification_raw_hashes=qualification_raw_hashes,
+                    qualification_bindings=qualification_bindings,
                 )
                 first_phase = False
                 phase_receipts.append(phase)
@@ -1444,8 +1597,12 @@ def run_anytime_offline_rehearsal(
         terminal_counts=tuple(sorted(terminal_counts.items())),
         phase_receipts=tuple(phase_receipts),
         phase_receipt_bundle_sha256=_model_sequence_sha256(tuple(phase_receipts)),
-        qualifications=tuple(qualification_bindings),
-        qualification_bundle_sha256=_model_sequence_sha256(tuple(qualification_bindings)),
+        qualifications=tuple(
+            sorted(qualification_bindings, key=lambda item: item.relative_path)
+        ),
+        qualification_bundle_sha256=_model_sequence_sha256(
+            tuple(sorted(qualification_bindings, key=lambda item: item.relative_path))
+        ),
         pending_m9_qualification_count=sum(
             fixture.decision.status == "pending-m9"
             for fixture in qualification_fixtures.values()
@@ -1492,28 +1649,29 @@ def run_anytime_offline_rehearsal(
 
 def _verify_qualification_fixture(
     fixture: AnytimeOfflineQualificationFixture,
+    *,
+    inputs: PinnedAnytimeWorkloadInputs,
+    cell: AnytimeScheduleCell,
+    identity: AnytimeAttemptIdentity,
+    prepared: Any,
+    provider: AnytimePersistedProviderObservation,
 ) -> None:
-    expected_source = _target_source(
-        fixture.target_id,
-        fixture.scientific_call_index,
-    )
+    expected_source = _target_source(cell.target_id, prepared.scientific_call_index)
     if fixture.invocation.source.text != expected_source:
         raise AnytimeRehearsalError("qualification fixture source differs from handwritten input")
-    expected = qualify_anytime_candidate_offline(
-        binding=fixture.binding,
-        invocation=fixture.invocation,
-        isolation_contract=fixture.isolation_contract,
-        runtime_observation=fixture.runtime_observation,
-        launch_attestation=fixture.launch_attestation,
+    expected = _qualification_fixture(
+        inputs=inputs,
+        cell=cell,
+        identity=identity,
+        scientific_call_index=prepared.scientific_call_index,
+        logical_request_sha256=sha256_json(prepared.logical_request),
+        provider_observation_sha256=provider.sha256,
+        source=expected_source,
     )
-    if expected != fixture.decision:
-        raise AnytimeRehearsalError("qualification decision is not derived from fixture evidence")
-    if (
-        expected.formal_target_use_qualified
-        or expected.real_os_containment_observed
-        or expected.trusted_gpu_launch_observed
-    ):
-        raise AnytimeRehearsalError("offline qualification crossed the M9 boundary")
+    if expected != fixture:
+        raise AnytimeRehearsalError(
+            "qualification fixture is not bound to the exact trajectory, request, and provider"
+        )
 
 
 def _verify_phase(
@@ -1525,9 +1683,9 @@ def _verify_phase(
     repository_root: Path,
     schedule_sha256: str,
     cells_by_id: dict[str, AnytimeScheduleCell],
-    qualification_fixtures: dict[tuple[str, int], AnytimeOfflineQualificationFixture],
-    qualification_hashes: dict[tuple[str, int], str],
-) -> tuple[AnytimePhaseAudit, dict[str, AnytimeAttemptAudit]]:
+    qualification_fixtures: dict[QualificationKey, AnytimeOfflineQualificationFixture],
+    qualification_hashes: dict[QualificationKey, str],
+) -> tuple[AnytimePhaseAudit, dict[str, AnytimeAttemptAudit], set[QualificationKey]]:
     study = build_anytime_shakeout_study()
     cells = tuple(cells_by_id[item] for item in phase_receipt.expected_trajectory_ids)
     first = cells[0]
@@ -1589,6 +1747,7 @@ def _verify_phase(
         raise AnytimeRehearsalError("phase receipt differs from its fresh source audit")
 
     successful: dict[str, AnytimeAttemptAudit] = {}
+    used_qualification_keys: set[QualificationKey] = set()
     bundle = build_anytime_native_manifest_bundle(study.agent(phase_receipt.agent_id))
     for attempt in audit.attempts:
         if attempt.terminal.terminal_kind != "success":
@@ -1596,37 +1755,87 @@ def _verify_phase(
         successful[attempt.identity.trajectory_id] = attempt
         cell = cells_by_id[attempt.identity.trajectory_id]
         directory = Path(attempt.directory)
+        header = _read_model(directory / "header.json", AnytimeAttemptHeader)
+        if header.identity != attempt.identity:
+            raise AnytimeRehearsalError("attempt header differs from its audited identity")
+        records: tuple[AnytimeTurnRecord, ...] = ()
+        checkpoints: tuple[Any, ...] = ()
         response_paths = sorted(directory.glob("turns/*/provider-native-response.json"))
         worker_paths = sorted(directory.glob("turns/*/worker-result.json"))
         if len(response_paths) != 4 or len(worker_paths) != 4:
             raise AnytimeRehearsalError("successful fixture attempt lacks four scripted turns")
         for response_path, worker_path in zip(response_paths, worker_paths, strict=True):
             call = int(response_path.parent.name)
+            if worker_path.parent != response_path.parent:
+                raise AnytimeRehearsalError("provider and worker artifacts are not co-located")
+            prepared = prepare_anytime_turn(
+                header=header.ledger_header,
+                loop=loop,
+                base_prompt=base_prompt,
+                records=records,
+                checkpoints=checkpoints,
+            )
+            if prepared.scientific_call_index != call:
+                raise AnytimeRehearsalError("turn directory does not match its prepared call")
+            source = _target_source(cell.target_id, call)
             response = _read_model(response_path, NativeNormalizedResponse)
+            expected_response = _fake_native_response(
+                prepared=prepared,
+                cell=cell,
+                infrastructure_attempt_index=attempt.identity.infrastructure_attempt_index,
+                bundle=bundle,
+                freeze=freeze,
+                source=source,
+            )
+            if response != expected_response:
+                raise AnytimeRehearsalError(
+                    "scripted provider fact differs in model, reasoning, request, or response"
+                )
+            persisted = _read_model(
+                response_path.parent / "provider-observation.json",
+                AnytimePersistedProviderObservation,
+            )
             worker = _read_model(worker_path, AnytimeWorkerEvaluationArtifact)
-            fixture = qualification_fixtures[(cell.target_id, call)]
-            if (
-                response.protocol != bundle.provider.protocol
-                or response.provider_manifest_sha256 != bundle.provider_sha256
-                or response.model_manifest_sha256 != bundle.model_sha256
-                or response.raw_transport_response.get("origin")
-                != "offline-synthetic-fixture"
-                or response.warnings != (FAKE_PROVIDER_WARNING,)
-                or response.text
-                != f"```python\n{fixture.invocation.source.text.rstrip()}\n```"
-            ):
-                raise AnytimeRehearsalError("scripted provider fact differs from its fixture")
-            if (
-                not isinstance(worker.candidate, AnytimeIneligibleCandidate)
-                or worker.candidate.source.source
-                != fixture.invocation.source.text
-                or worker.qualification_artifact_sha256
-                != qualification_hashes[(cell.target_id, call)]
-            ):
+            key = (
+                attempt.identity.trajectory_id,
+                attempt.identity.infrastructure_attempt_index,
+                call,
+            )
+            fixture = qualification_fixtures.get(key)
+            if fixture is None:
+                raise AnytimeRehearsalError("missing execution-bound qualification fixture")
+            _verify_qualification_fixture(
+                fixture,
+                inputs=inputs,
+                cell=cell,
+                identity=attempt.identity,
+                prepared=prepared,
+                provider=persisted,
+            )
+            expected_worker = _fake_worker_artifact(
+                provider=persisted,
+                cell=cell,
+                scientific_call_index=call,
+                source=source,
+                qualification_raw_sha256=qualification_hashes[key],
+            )
+            if worker != expected_worker:
                 raise AnytimeRehearsalError("scripted worker fact differs from qualification input")
+            used_qualification_keys.add(key)
+            record = _read_model(
+                response_path.parent / "turn-record.json",
+                AnytimeTurnRecord,
+            )
+            records = (*records, record)
+            checkpoints = rebuild_anytime_checkpoints(
+                header=header.ledger_header,
+                loop=loop,
+                base_prompt=base_prompt,
+                records=records,
+            )
     if set(successful) != set(phase_receipt.expected_trajectory_ids):
         raise AnytimeRehearsalError("phase does not contain two successful terminal trajectories")
-    return audit, successful
+    return audit, successful, used_qualification_keys
 
 
 def verify_anytime_offline_rehearsal(
@@ -1686,31 +1895,40 @@ def verify_anytime_offline_rehearsal(
         ),
         repository_root=repository,
     )
-    qualifications: dict[tuple[str, int], AnytimeOfflineQualificationFixture] = {}
-    qualification_hashes: dict[tuple[str, int], str] = {}
+    qualifications: dict[QualificationKey, AnytimeOfflineQualificationFixture] = {}
+    qualification_hashes: dict[QualificationKey, str] = {}
     observed_bindings: list[AnytimeRehearsalArtifactBinding] = []
     for binding in receipt.qualifications:
         path = root.joinpath(*PurePosixPath(binding.relative_path).parts)
         fixture = _read_model(path, AnytimeOfflineQualificationFixture)
         if (
-            fixture.target_id != binding.target_id
+            binding.relative_path
+            != _qualification_path(
+                fixture.trajectory_id,
+                fixture.infrastructure_attempt_index,
+                fixture.scientific_call_index,
+            )
+            or fixture.trajectory_id != binding.trajectory_id
+            or fixture.infrastructure_attempt_index != binding.infrastructure_attempt_index
+            or fixture.target_id != binding.target_id
             or fixture.scientific_call_index != binding.scientific_call_index
+            or fixture.binding.execution_binding_sha256 != binding.execution_binding_sha256
             or _file_sha256(path) != binding.raw_sha256
             or fixture.sha256 != binding.canonical_sha256
         ):
             raise AnytimeRehearsalError("qualification artifact differs from its receipt binding")
-        _verify_qualification_fixture(fixture)
-        key = (fixture.target_id, fixture.scientific_call_index)
+        key = (
+            fixture.trajectory_id,
+            fixture.infrastructure_attempt_index,
+            fixture.scientific_call_index,
+        )
         if key in qualifications:
             raise AnytimeRehearsalError("duplicate qualification fixture")
         qualifications[key] = fixture
         qualification_hashes[key] = binding.raw_sha256
         observed_bindings.append(binding)
-    expected_qualification_keys = {
-        (target_id, call) for target_id in TARGET_IDS for call in range(1, 5)
-    }
-    if set(qualifications) != expected_qualification_keys:
-        raise AnytimeRehearsalError("qualification fixtures do not cover 3 targets x 4 calls")
+    if len(qualifications) != 192:
+        raise AnytimeRehearsalError("qualification fixtures do not cover all execution-bound turns")
     if _model_sequence_sha256(tuple(observed_bindings)) != receipt.qualification_bundle_sha256:
         raise AnytimeRehearsalError("qualification receipt bundle is not reproducible")
 
@@ -1761,11 +1979,12 @@ def verify_anytime_offline_rehearsal(
 
     successful: dict[str, AnytimeAttemptAudit] = {}
     all_attempts: list[AnytimeAttemptAudit] = []
+    used_qualification_keys: set[QualificationKey] = set()
     for phase in receipt.phase_receipts:
         expected_phase_id = _phase_id(phase.agent_id, phase.workload_id, phase.target_id)
         if phase.phase_id != expected_phase_id:
             raise AnytimeRehearsalError("phase ID differs from its canonical prompt group")
-        audit, phase_successful = _verify_phase(
+        audit, phase_successful, phase_qualification_keys = _verify_phase(
             root,
             phase_receipt=phase,
             freeze=freeze,
@@ -1777,9 +1996,23 @@ def verify_anytime_offline_rehearsal(
             qualification_hashes=qualification_hashes,
         )
         all_attempts.extend(audit.attempts)
+        used_qualification_keys.update(phase_qualification_keys)
         if set(successful).intersection(phase_successful):
             raise AnytimeRehearsalError("successful trajectory appears in multiple phases")
         successful.update(phase_successful)
+
+    expected_qualification_keys = {
+        (attempt.identity.trajectory_id, attempt.identity.infrastructure_attempt_index, call)
+        for attempt in successful.values()
+        for call in range(1, 5)
+    }
+    if (
+        set(qualifications) != expected_qualification_keys
+        or used_qualification_keys != expected_qualification_keys
+    ):
+        raise AnytimeRehearsalError(
+            "qualification fixtures do not cover exactly the successful turns"
+        )
 
     terminal_counts = Counter(item.terminal.terminal_kind for item in all_attempts)
     protocol_counts = Counter()

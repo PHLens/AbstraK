@@ -26,6 +26,7 @@ from abstrak.anytime.ledger import (
     AnytimeProviderObservation,
     AnytimeProviderSubmittedError,
     AnytimeProviderSuccess,
+    AnytimeQualificationPending,
     AnytimeStaticCheckFailure,
     AnytimeTimingUnstable,
     AnytimeTokenUsage,
@@ -253,6 +254,30 @@ def test_full_synthetic_history_reconstructs_context_resources_and_incumbent() -
     assert verified.resource_snapshot.known_output_tokens == 120
     assert verified.incumbent == _source("j")
     assert verified.terminal_reason == "call_budget"
+
+
+def test_qualification_pending_asserts_no_execution_resources_or_feedback_facts() -> None:
+    loop = _loop(calls=4)
+    header = _header(loop)
+    records, checkpoints = _append_candidate(
+        header,
+        loop,
+        (),
+        (),
+        AnytimeQualificationPending(
+            source=_source("pending"),
+            diagnostics=("trusted execution is deferred",),
+        ),
+    )
+
+    record = records[0]
+    assert record.resource_delta.compile_attempts == 0
+    assert record.resource_delta.evaluation_attempts == 0
+    assert record.resource_delta.gpu_seconds == 0.0
+    assert record.feedback.status == "qualification_pending"
+    assert record.feedback.compiled is None
+    assert record.feedback.correct is None
+    assert checkpoints[0].incumbent is None
 
 
 @pytest.mark.parametrize("kind", ("submitted_error", "ambiguous_submission"))

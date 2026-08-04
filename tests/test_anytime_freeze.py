@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,6 @@ from pydantic import ValidationError
 from abstrak.anytime.freeze import (
     CORE_SOURCE_ASSET_PATHS,
     CORE_WORKLOAD_IDS,
-    DEFAULT_REPOSITORY_ROOT,
     FORMAL_STUDY_FILENAME,
     M9_BLOCKERS,
     OFFLINE_FREEZE_FILENAME,
@@ -40,18 +38,6 @@ from abstrak.anytime.workloads import TARGET_IDS, WORKLOAD_IDS
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _copy_freeze_repository_inputs(destination: Path) -> None:
-    relative_paths = (
-        *CORE_SOURCE_ASSET_PATHS,
-        "benchmarks/anytime-dsl-a100/manifests/inputs.json",
-    )
-    for relative_path in relative_paths:
-        source = DEFAULT_REPOSITORY_ROOT / relative_path
-        target = destination / relative_path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
 
 
 def test_canonical_studies_have_exact_axes_budgets_and_hashes() -> None:
@@ -258,6 +244,8 @@ def test_freeze_binds_m6_isolation_static_policies_dependencies_and_non_live_sta
     assert "src/abstrak/anytime/prompts.py" in asset_paths
     assert "src/abstrak/anytime/rehearsal.py" in asset_paths
     assert "src/abstrak/providers/contracts.py" in asset_paths
+    assert "src/abstrak/providers/__init__.py" in asset_paths
+    assert "benchmarks/r1-a100/targets/triton.md" in asset_paths
     assert not any(path.endswith("study.json") for path in asset_paths)
     assert OFFLINE_FREEZE_FILENAME not in asset_paths
 
@@ -345,21 +333,9 @@ def test_semantically_equal_noncanonical_freeze_is_rejected(tmp_path: Path) -> N
         verify_anytime_offline_freeze(pinned)
 
 
-def test_source_asset_drift_is_detected_against_manifest(tmp_path: Path) -> None:
-    repository = tmp_path / "repository"
-    _copy_freeze_repository_inputs(repository)
-    output = tmp_path / "output"
-    result = write_anytime_freeze_manifests(output, repository_root=repository)
-    pinned = load_anytime_offline_freeze(
-        output / OFFLINE_FREEZE_FILENAME,
-        expected_sha256=result.freeze_raw_sha256,
-    )
-    assert verify_anytime_offline_freeze(pinned, repository_root=repository) == result.manifest
-
-    changed = repository / "src/abstrak/anytime/context.py"
-    changed.write_bytes(changed.read_bytes() + b"\n# changed after freeze\n")
-    with pytest.raises(AnytimeFreezeError, match="current bound inputs or code"):
-        verify_anytime_offline_freeze(pinned, repository_root=repository)
+def test_freeze_rejects_a_repository_mirror_with_different_loaded_code(tmp_path: Path) -> None:
+    with pytest.raises(AnytimeFreezeError, match="differs from the checkout"):
+        write_anytime_freeze_manifests(tmp_path / "output", repository_root=tmp_path)
 
 
 def test_freeze_contract_rejects_recursive_assets_unknown_fields_and_changed_blockers() -> None:

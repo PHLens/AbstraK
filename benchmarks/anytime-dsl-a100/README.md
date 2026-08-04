@@ -44,6 +44,8 @@ uv run python scripts/freeze_anytime_offline.py --check --require-clean
 The optional `--rehearse DIRECTORY` flag is available only with `--check`. It writes a complete
 48-trajectory fake-provider/fake-worker shakeout to a new directory, including one request-before-
 dispatch crash and bounded retry, 192 scripted responses, phase journals, pending-M9 qualification
-fixtures, invalid-floor output, analysis tables, and figures. Candidate source is statically inspected
-only; no provider credentials, network request, SSH connection, GPU API, or candidate execution is
-performed. The rehearsal is synthetic evidence and cannot authorize M9 or formal scoring.
+fixtures (one execution-bound artifact per successful trajectory turn), invalid-floor output, analysis
+tables, and figures. Candidate source is statically inspected only; no provider credentials, network
+request, SSH connection, GPU API, or candidate execution is performed. Pending qualification is kept
+out of compiled/correct rates. The rehearsal is synthetic evidence and cannot authorize M9 or formal
+scoring.

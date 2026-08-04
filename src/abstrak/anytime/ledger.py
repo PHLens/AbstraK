@@ -378,6 +378,23 @@ class AnytimeIneligibleCandidate(_CandidateOutcome):
         return _validate_diagnostics(values)
 
 
+class AnytimeQualificationPending(_CandidateOutcome):
+    """A parsed fixture whose compile, correctness, and target use remain unobserved."""
+
+    schema_version: Literal["abstrak-anytime-candidate-qualification-pending.v1"] = (
+        "abstrak-anytime-candidate-qualification-pending.v1"
+    )
+    kind: Literal["qualification_pending"] = "qualification_pending"
+    reason: Literal["offline_rehearsal"] = "offline_rehearsal"
+    source: AnytimeSourceSnapshot
+    diagnostics: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("diagnostics")
+    @classmethod
+    def diagnostics_are_valid(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        return _validate_diagnostics(values)
+
+
 AnytimeCandidateOutcome: TypeAlias = Annotated[
     AnytimeEligibleCandidate
     | AnytimeParseFailure
@@ -389,7 +406,8 @@ AnytimeCandidateOutcome: TypeAlias = Annotated[
     | AnytimeCandidateTimeout
     | AnytimeCandidateRuntimeError
     | AnytimeTimingUnstable
-    | AnytimeIneligibleCandidate,
+    | AnytimeIneligibleCandidate
+    | AnytimeQualificationPending,
     Field(discriminator="kind"),
 ]
 
@@ -688,6 +706,7 @@ def _candidate_resource_facts(
             AnytimeOversizeSource,
             AnytimeDuplicateSource,
             AnytimeStaticCheckFailure,
+            AnytimeQualificationPending,
         ),
     ):
         return 0, 0, 0.0, 0.0, 0.0
@@ -722,6 +741,12 @@ def _feedback_input_for_candidate(
             correct=True,
             diagnostics=candidate.diagnostics,
             error=f"candidate ineligible: {candidate.reason}",
+        )
+    if isinstance(candidate, AnytimeQualificationPending):
+        return AnytimeFeedbackInput(
+            status="qualification_pending",
+            diagnostics=candidate.diagnostics,
+            error="candidate execution and qualification remain pending trusted M9 evaluation",
         )
     if isinstance(candidate, AnytimeParseFailure):
         return AnytimeFeedbackInput(

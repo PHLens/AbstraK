@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +12,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import abstrak.anytime.rehearsal as rehearsal_module
 from abstrak.anytime.artifacts import AnytimeArtifactError
 from abstrak.anytime.figures import AnytimeFigureManifest
 from abstrak.anytime.freeze import (
@@ -38,7 +41,9 @@ from abstrak.anytime.workloads import (
     load_anytime_workload_inputs,
 )
 from abstrak.providers.contracts import sha256_json
+from abstrak.providers.native_client import NativeProviderClient
 from abstrak.providers.native_contracts import NativeNormalizedResponse
+from abstrak.providers.native_transport import LiteLLMNativeTransport
 
 
 def _canonical_bytes(value: object) -> bytes:
@@ -131,7 +136,7 @@ def test_full_scripted_shakeout_rehearsal_is_closed_and_explicitly_non_live(
         ("chat_completions", 96),
         ("responses", 96),
     )
-    assert receipt.candidate_outcome_counts == (("ineligible", 192),)
+    assert receipt.candidate_outcome_counts == (("qualification_pending", 192),)
     assert receipt.terminal_counts == (("infrastructure_failure", 1), ("success", 48))
     assert sum(phase.attempt_count == 3 for phase in receipt.phase_receipts) == 1
     assert receipt.floor_gate == "invalid_floor"
@@ -149,8 +154,15 @@ def test_full_scripted_shakeout_rehearsal_is_closed_and_explicitly_non_live(
         == result.manifest
     )
 
-    qualifications = sorted(result.directory.glob("qualifications/*/call-*.json"))
-    assert len(qualifications) == 12
+    qualifications = sorted(result.directory.glob("qualifications/*/attempt-*/call-*.json"))
+    assert len(qualifications) == 192
+    assert len({path.parent.parent.name for path in qualifications}) == 48
+    assert len({path.parent.name for path in qualifications}) == 2
+    assert len({
+        AnytimeOfflineQualificationFixture.model_validate_json(path.read_bytes())
+        .binding.execution_binding_sha256
+        for path in qualifications
+    }) == 192
     assert all(
         AnytimeOfflineQualificationFixture.model_validate_json(path.read_bytes()).decision.status
         == "pending-m9"
@@ -203,6 +215,7 @@ def test_rehearsal_rejects_inner_attempt_tamper_even_after_outer_rehash(
                 else item.size_bytes
             ),
         )
+
         for item in manifest.files
     )
     rehashed = AnytimeOfflineRehearsalManifest(
@@ -219,6 +232,113 @@ def test_rehearsal_rejects_inner_attempt_tamper_even_after_outer_rehash(
             pinned_freeze=pinned,
             repository_root=DEFAULT_REPOSITORY_ROOT,
         )
+
+
+def test_rehearsal_rejects_native_reasoning_and_request_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen = write_anytime_freeze_manifests(tmp_path / "freeze")
+    pinned = load_anytime_offline_freeze(
+        tmp_path / "freeze" / "offline-freeze.json",
+        expected_sha256=frozen.freeze_raw_sha256,
+    )
+    original = rehearsal_module._fake_native_response
+
+    def altered_response(**kwargs):
+        response = original(**kwargs)
+        if response.protocol != "responses":
+            return response
+        request = dict(response.sanitized_transport_request)
+        request["reasoning"] = {"effort": "high"}
+        return response.model_copy(
+            update={
+                "sanitized_transport_request": request,
+                "transport_request_sha256": sha256_json(request),
+            }
+        )
+
+    monkeypatch.setattr(rehearsal_module, "_fake_native_response", altered_response)
+    result = run_anytime_offline_rehearsal(
+        tmp_path / "rehearsal",
+        pinned_freeze=pinned,
+        repository_root=DEFAULT_REPOSITORY_ROOT,
+    )
+    monkeypatch.setattr(rehearsal_module, "_fake_native_response", original)
+
+    with pytest.raises(AnytimeRehearsalError, match="reasoning|request"):
+        verify_anytime_offline_rehearsal(
+            result.directory,
+            pinned_freeze=pinned,
+            repository_root=DEFAULT_REPOSITORY_ROOT,
+        )
+
+
+def test_rehearsal_is_run_under_network_credential_and_native_client_guards(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen = write_anytime_freeze_manifests(tmp_path / "freeze")
+    pinned = load_anytime_offline_freeze(
+        tmp_path / "freeze" / "offline-freeze.json",
+        expected_sha256=frozen.freeze_raw_sha256,
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("offline rehearsal crossed a live side-effect boundary")
+
+    monkeypatch.setattr(socket.socket, "connect", forbidden)
+    monkeypatch.setattr(socket.socket, "connect_ex", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(NativeProviderClient, "__init__", forbidden)
+    monkeypatch.setattr(LiteLLMNativeTransport, "__init__", forbidden)
+
+    provider_environment = {
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+    }
+    original_getenv = os.getenv
+    monkeypatch.setattr(
+        os,
+        "getenv",
+        lambda key, default=None: (
+            forbidden(key)
+            if key in provider_environment
+            else original_getenv(key, default)
+        ),
+    )
+    environment_type = type(os.environ)
+    original_get = environment_type.get
+    original_getitem = environment_type.__getitem__
+    monkeypatch.setattr(
+        environment_type,
+        "get",
+        lambda environment, key, default=None: (
+            forbidden(key)
+            if key in provider_environment
+            else original_get(environment, key, default)
+        ),
+    )
+    monkeypatch.setattr(
+        environment_type,
+        "__getitem__",
+        lambda environment, key: (
+            forbidden(key)
+            if key in provider_environment
+            else original_getitem(environment, key)
+        ),
+    )
+
+    result = run_anytime_offline_rehearsal(
+        tmp_path / "rehearsal",
+        pinned_freeze=pinned,
+        repository_root=DEFAULT_REPOSITORY_ROOT,
+    )
+    assert not any(
+        result.receipt.side_effects.model_dump(mode="python", exclude={"schema_version"}).values()
+    )
 
 
 def test_offline_cli_prints_ceilings_before_non_authorization_and_has_no_live_flags() -> None:
@@ -257,3 +377,20 @@ def test_offline_cli_prints_ceilings_before_non_authorization_and_has_no_live_fl
     assert "formal_authorized=false" in lines
     assert "freeze_status=verified" in lines
     assert "live_worker_revision=pending_m9" in lines
+
+    mismatched = subprocess.run(
+        (
+            sys.executable,
+            str(script),
+            "--check",
+            "--repository-root",
+            str(Path("/tmp")),
+            "--output-directory",
+            str(DEFAULT_FREEZE_DIRECTORY),
+        ),
+        cwd=DEFAULT_REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert mismatched.returncode != 0
+    assert "differs from the checkout" in mismatched.stderr

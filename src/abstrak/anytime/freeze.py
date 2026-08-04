@@ -13,6 +13,7 @@ import json
 import os
 import re
 import stat
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -55,6 +56,7 @@ from abstrak.anytime.workloads import (
     WORKLOAD_IDS,
     PinnedAnytimeWorkloadInputs,
     load_anytime_workload_inputs,
+    validate_anytime_workload_inputs,
 )
 from abstrak.providers.contracts import sha256_json
 from abstrak.providers.native_conformance import evaluate_native_dependency_conformance
@@ -100,11 +102,15 @@ SHAKEOUT_WORKLOAD_IDS = (
 
 # Generated manifests and freeze_pins.py are intentionally absent to avoid digest recursion.
 CORE_SOURCE_ASSET_PATHS = (
+    "benchmarks/r1-a100/targets/cute.md",
+    "benchmarks/r1-a100/targets/tilelang.md",
+    "benchmarks/r1-a100/targets/triton.md",
     "docs/anytime-dsl-a100-implementation-plan.md",
     "pyproject.toml",
     "scripts/bootstrap-a100.sh",
     "scripts/freeze_anytime_offline.py",
     "scripts/update-worker.sh",
+    "src/abstrak/__init__.py",
     "src/abstrak/anytime/__init__.py",
     "src/abstrak/anytime/analysis.py",
     "src/abstrak/anytime/artifacts.py",
@@ -122,11 +128,15 @@ CORE_SOURCE_ASSET_PATHS = (
     "src/abstrak/anytime/resume.py",
     "src/abstrak/anytime/schedule.py",
     "src/abstrak/anytime/workloads.py",
+    "src/abstrak/providers/__init__.py",
+    "src/abstrak/providers/client.py",
     "src/abstrak/providers/contracts.py",
+    "src/abstrak/providers/manifests.py",
     "src/abstrak/providers/native_client.py",
     "src/abstrak/providers/native_conformance.py",
     "src/abstrak/providers/native_contracts.py",
     "src/abstrak/providers/native_transport.py",
+    "src/abstrak/providers/transport.py",
     "uv.lock",
 )
 
@@ -208,6 +218,41 @@ def _resolve_repository_asset(repository_root: Path, relative_path: str) -> Path
     if candidate.parent != root and root not in candidate.parents:
         raise AnytimeFreezeError(f"source asset escapes repository root: {relative_path}")
     return candidate
+
+
+def _active_repository_root(repository_root: str | Path) -> Path:
+    """Require attested bytes and imported builders to come from one checkout."""
+
+    try:
+        requested = Path(repository_root).expanduser().resolve(strict=True)
+        loaded_source = Path(__file__).resolve(strict=True)
+        loaded_root = loaded_source.parents[3]
+    except OSError as error:
+        raise AnytimeFreezeError(f"cannot resolve active repository checkout: {error}") from error
+    expected_source = loaded_root / "src" / "abstrak" / "anytime" / "freeze.py"
+    if expected_source.resolve(strict=True) != loaded_source:
+        raise AnytimeFreezeError("loaded freeze module is not rooted in its inferred checkout")
+    for module_name, module in tuple(sys.modules.items()):
+        if module_name != "abstrak" and not module_name.startswith("abstrak."):
+            continue
+        module_path = getattr(module, "__file__", None)
+        if module_path is None:
+            continue
+        try:
+            resolved_module_path = Path(module_path).resolve(strict=True)
+        except OSError as error:
+            raise AnytimeFreezeError(
+                f"cannot resolve loaded module {module_name}: {error}"
+            ) from error
+        if resolved_module_path != loaded_root and loaded_root not in resolved_module_path.parents:
+            raise AnytimeFreezeError(
+                f"loaded module {module_name} is outside the attested checkout"
+            )
+    if requested != loaded_root:
+        raise AnytimeFreezeError(
+            "repository root differs from the checkout providing the loaded freeze code"
+        )
+    return requested
 
 
 def _agent(
@@ -806,13 +851,19 @@ def build_anytime_offline_freeze(
 ) -> AnytimeOfflineFreezeManifest:
     """Build the complete offline freeze from current reviewed repository bytes."""
 
-    root = Path(repository_root).resolve(strict=True)
+    root = _active_repository_root(repository_root)
     formal = build_anytime_formal_study()
     shakeout = build_anytime_shakeout_study()
     formal_payload = _canonical_json_bytes(formal)
     shakeout_payload = _canonical_json_bytes(shakeout)
     input_path = root / DEFAULT_INPUT_MANIFEST.relative_to(DEFAULT_REPOSITORY_ROOT)
-    inputs = load_anytime_workload_inputs(input_path, expected_sha256=PINNED_INPUT_MANIFEST_SHA256)
+    inputs = validate_anytime_workload_inputs(
+        load_anytime_workload_inputs(
+            input_path,
+            expected_sha256=PINNED_INPUT_MANIFEST_SHA256,
+        ),
+        repository_root=root,
+    )
     assets = _source_assets(root, source_asset_paths)
     timing = AnytimeTimingPolicy(
         search=AnytimeTimingProtocol(
