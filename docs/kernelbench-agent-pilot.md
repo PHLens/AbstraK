@@ -23,8 +23,8 @@ uv run abstrak-kernelbench agent-collect \
   --study configs/studies/kernelbench-agent-smoke.yaml \
   --kernelbench-root /home/cambricon/KernelBench \
   --ssh-host a100-r1 \
-  --worker-root /mnt/lipenghui/AbstraK \
-  --worker-kernelbench-root /mnt/lipenghui/KernelBench \
+  --worker-root /workspace/volume/lipenghui/AbstraK \
+  --worker-kernelbench-root /workspace/volume/lipenghui/KernelBench \
   --run-id agent-smoke-001 --live
 ```
 
