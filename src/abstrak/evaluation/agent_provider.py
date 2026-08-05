@@ -116,7 +116,7 @@ class PilotProviderClient:
     ) -> None:
         self.model = model
         self.generation = generation
-        self.transport = transport or LiteLLMNativeTransport()
+        self.transport = transport if transport is not None else LiteLLMNativeTransport()
         try:
             self._api_key = environment[model.api_key_env]
         except KeyError as error:

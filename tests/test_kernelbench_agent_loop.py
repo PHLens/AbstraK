@@ -335,6 +335,11 @@ class FakeTransport:
         return self.payload
 
 
+class FalsyFakeTransport(FakeTransport):
+    def __bool__(self) -> bool:
+        return False
+
+
 @pytest.mark.parametrize(
     ("protocol", "payload"),
     [
@@ -384,3 +389,19 @@ def test_pilot_provider_uses_requested_protocol_and_xhigh(
     assert request["api_key"] == "secret"
     assert completion.sanitized_request["api_key_env"] == "TEST_API_KEY"
     assert "secret" not in json.dumps(completion.sanitized_request)
+
+
+def test_pilot_provider_keeps_an_explicit_falsy_transport() -> None:
+    payload = {
+        "choices": [{"message": {"content": _candidate("offline")}}],
+        "usage": {},
+    }
+    transport = FalsyFakeTransport(payload)
+    client = PilotProviderClient(
+        _model(),
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+    client.complete([ChatMessage(role=MessageRole.USER, content="prompt")])
+    assert transport.call_count == 1
