@@ -8,12 +8,14 @@ from typing import Any
 
 import pytest
 
+from abstrak.evaluation.agent_analysis import analyze_agent_run
 from abstrak.evaluation.agent_contracts import (
     AgentGenerationConfig,
     AgentModelSpec,
     KernelBenchAgentStudy,
     load_agent_study,
 )
+from abstrak.evaluation.agent_figures import plot_agent_run
 from abstrak.evaluation.agent_provider import (
     AgentCompletion,
     AgentProviderError,
@@ -237,6 +239,33 @@ def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path
         for line in (result.run_directory / "raw" / "attempts.jsonl").read_text().splitlines()
     ]
     assert attempts[0]["provider_elapsed_ms"] == 3.0
+
+
+def test_collector_artifacts_feed_real_analysis_and_plot(tmp_path: Path) -> None:
+    study = _study(iterations=2)
+    client = FakeClient(
+        [
+            _completion(_candidate("first"), "r1"),
+            _completion(_candidate("second"), "r2"),
+        ]
+    )
+    collection = AgentCollectionRunner(
+        study=study,
+        checkout=FakeCheckout(),  # type: ignore[arg-type]
+        provider_factory=lambda model: client,
+        evaluator=FakeEvaluator([1.1, 1.3]),
+        worker_kernelbench_root="/worker/KernelBench",
+        artifact_root=tmp_path,
+        run_id="end-to-end",
+    ).run()
+
+    metrics, metrics_json, metrics_csv = analyze_agent_run(collection.run_directory)
+    figures = plot_agent_run(collection.run_directory)
+
+    assert metrics["curve_rows"][-1]["best_speedup"] == 1.3
+    assert metrics_json.is_file()
+    assert metrics_csv.is_file()
+    assert all(path.is_file() and path.stat().st_size > 0 for path in figures)
 
 
 def test_ssh_evaluator_serializes_one_job(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -94,6 +94,18 @@ uv run abstrak-kernelbench validate \
   --kernelbench-root /path/to/KernelBench
 ```
 
+The small iterative DSL-target pilot is available as independent collect, analyze, and plot
+stages, plus a one-command pipeline. It evaluates every generated candidate immediately on the
+SSH worker and returns that KernelBench result to the next model turn. See
+`docs/kernelbench-agent-pilot.md`; inspect the runnable arguments with:
+
+```bash
+uv run abstrak-kernelbench agent-collect --help
+uv run abstrak-kernelbench agent-analyze --help
+uv run abstrak-kernelbench agent-plot --help
+uv run abstrak-kernelbench agent-pipeline --help
+```
+
 The first R1 canary vertical slice can execute a hash-bound trusted oracle on
 an SSH A100 worker before any model request:
 
