@@ -167,6 +167,16 @@ class SshAgentEvaluator:
         self.ssh_executable = ssh_executable
 
     @property
+    def binding(self) -> dict[str, object]:
+        return {
+            "kind": "ssh",
+            "host": self.host,
+            "port": self.port,
+            "worker_root": str(self.worker_root),
+            "worker_python": self.worker_python,
+        }
+
+    @property
     def command(self) -> list[str]:
         remote = shlex.join(
             [
@@ -556,6 +566,15 @@ class AgentCollectionRunner:
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "iterations": self.iterations,
             "trajectory_count": self.study.trajectory_count,
+            "worker": {
+                **(
+                    self.evaluator.binding
+                    if isinstance(self.evaluator, SshAgentEvaluator)
+                    else {"kind": "injected"}
+                ),
+                "kernelbench_root": self.worker_kernelbench_root,
+                "device": self.device,
+            },
         }
         _write_json(raw / "run.json", run_payload)
 

@@ -261,8 +261,16 @@ def test_collector_artifacts_feed_real_analysis_and_plot(tmp_path: Path) -> None
 
     metrics, metrics_json, metrics_csv = analyze_agent_run(collection.run_directory)
     figures = plot_agent_run(collection.run_directory)
+    run_payload = json.loads(
+        (collection.run_directory / "raw" / "run.json").read_text(encoding="utf-8")
+    )
 
     assert metrics["curve_rows"][-1]["best_speedup"] == 1.3
+    assert run_payload["worker"] == {
+        "kind": "injected",
+        "kernelbench_root": "/worker/KernelBench",
+        "device": "cuda:0",
+    }
     assert metrics_json.is_file()
     assert metrics_csv.is_file()
     assert all(path.is_file() and path.stat().st_size > 0 for path in figures)
@@ -300,6 +308,13 @@ def test_ssh_evaluator_serializes_one_job(monkeypatch: pytest.MonkeyPatch) -> No
     assert json.loads(observed["input"])["cell_id"] == "cell-1"
     assert observed["command"][:5] == ["ssh", "-o", "BatchMode=yes", "-p", "2222"]
     assert "abstrak.evaluation.agent_worker" in observed["command"][-1]
+    assert evaluator.binding == {
+        "kind": "ssh",
+        "host": "a100-r1",
+        "port": 2222,
+        "worker_root": "/srv/AbstraK",
+        "worker_python": "/srv/venv/bin/python",
+    }
 
 
 class FakeTransport:

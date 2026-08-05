@@ -42,6 +42,21 @@ The local checkout is used to render the pinned task prompt. `--worker-root` and
 existing `--auth`/`ABSTRAK_AUTH` mechanism or the model-specific environment variables in the
 study YAML.
 
+For the default two-model study, the auth file needs these four names (replace the example
+values locally):
+
+```json
+{
+  "schema_version": "auth.v1",
+  "environment": {
+    "ABSTRAK_DEEPSEEK_API_KEY": "...",
+    "ABSTRAK_DEEPSEEK_BASE_URL": "...",
+    "ABSTRAK_OPENAI_API_KEY": "...",
+    "ABSTRAK_OPENAI_BASE_URL": "..."
+  }
+}
+```
+
 Derive metrics and render figures independently:
 
 ```bash
