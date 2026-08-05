@@ -184,6 +184,23 @@ def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
     assert study.generation.reasoning_effort == "xhigh"
 
 
+def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
+    study = load_agent_study(
+        REPOSITORY_ROOT / "configs" / "studies" / "kernelbench-agent-deepseek-pilot.yaml"
+    )
+    assert [model.id for model in study.models] == ["deepseek-v4-flash"]
+    assert study.targets == ("triton", "tilelang", "cute")
+    assert [task.ref for task in study.tasks] == [
+        "level1-problem1",
+        "level1-problem3",
+        "level1-problem40",
+        "level2-problem76",
+    ]
+    assert study.iterations == 4
+    assert study.trajectory_count == 12
+    assert study.request_count == 48
+
+
 def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path) -> None:
     study = _study(iterations=3)
     client = FakeClient(

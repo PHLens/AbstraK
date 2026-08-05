@@ -28,6 +28,9 @@ uv run abstrak-kernelbench agent-collect \
   --run-id agent-smoke-001 --live
 ```
 
+After the smoke passes, `configs/studies/kernelbench-agent-deepseek-pilot.yaml` runs the same
+4 workloads x 3 targets x 4 turns as the default pilot using only `deepseek-v4-flash`.
+
 Then analyze and plot the returned `run_directory` with the commands below.
 
 Evaluate one already-written candidate:
