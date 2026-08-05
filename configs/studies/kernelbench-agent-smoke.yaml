@@ -1,0 +1,34 @@
+schema_version: kernelbench-agent-study.v1
+id: kernelbench-agent-smoke
+source:
+  repository: https://github.com/ScalingIntelligence/KernelBench.git
+  commit: 423217d9fda91e0c2d67e4a43bf62f96f6d104f1
+  require_clean_checkout: true
+models:
+  - id: deepseek-v4-flash
+    protocol: chat_completions
+    litellm_provider: deepseek
+    api_model: deepseek/deepseek-v4-flash
+    api_key_env: ABSTRAK_DEEPSEEK_API_KEY
+    base_url_env: ABSTRAK_DEEPSEEK_BASE_URL
+    timeout_seconds: 600
+targets:
+  - triton
+tasks:
+  - level: 1
+    problem_id: 1
+    stratum: dense-compute
+precision: fp16
+iterations: 2
+generation:
+  max_output_tokens: 8192
+  reasoning_effort: xhigh
+  temperature: null
+  top_p: null
+evaluator:
+  num_correct_trials: 2
+  num_perf_trials: 20
+  timing_method: cuda_event
+  timeout_seconds: 300
+  excessive_speedup_threshold: 10
+  static_check: true

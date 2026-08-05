@@ -168,6 +168,18 @@ def test_pilot_study_is_the_small_24_trajectory_matrix() -> None:
     assert study.generation.reasoning_effort == "xhigh"
 
 
+def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
+    study = load_agent_study(
+        REPOSITORY_ROOT / "configs" / "studies" / "kernelbench-agent-smoke.yaml"
+    )
+    assert study.trajectory_count == 1
+    assert study.request_count == 2
+    assert [model.id for model in study.models] == ["deepseek-v4-flash"]
+    assert study.targets == ("triton",)
+    assert [task.ref for task in study.tasks] == ["level1-problem1"]
+    assert study.generation.reasoning_effort == "xhigh"
+
+
 def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path) -> None:
     study = _study(iterations=3)
     client = FakeClient(

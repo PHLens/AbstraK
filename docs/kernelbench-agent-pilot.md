@@ -15,6 +15,21 @@ It contains 2 models x 4 KernelBench tasks x 3 targets and defaults to 4 turns p
 
 ## Separate stages
 
+Start with the DeepSeek-only 1 workload x 1 target x 2 turn smoke study if the OpenAI
+credentials are not configured yet:
+
+```bash
+uv run abstrak-kernelbench agent-collect \
+  --study configs/studies/kernelbench-agent-smoke.yaml \
+  --kernelbench-root /home/cambricon/KernelBench \
+  --ssh-host a100-r1 \
+  --worker-root /mnt/lipenghui/AbstraK \
+  --worker-kernelbench-root /mnt/lipenghui/KernelBench \
+  --run-id agent-smoke-001 --live
+```
+
+Then analyze and plot the returned `run_directory` with the commands below.
+
 Evaluate one already-written candidate:
 
 ```bash
