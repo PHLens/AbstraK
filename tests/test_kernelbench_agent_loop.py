@@ -18,6 +18,7 @@ from abstrak.evaluation.agent_contracts import (
 from abstrak.evaluation.agent_figures import plot_agent_run
 from abstrak.evaluation.agent_provider import (
     AgentCompletion,
+    AgentMessage,
     AgentProviderError,
     PilotProviderClient,
 )
@@ -30,7 +31,7 @@ from abstrak.evaluation.agent_runner import (
 from abstrak.evaluation.agent_worker import AgentEvaluationJob
 from abstrak.evaluation.contracts import EvaluationResult, KernelBenchSource, KernelBenchTask
 from abstrak.evaluation.kernelbench import TaskMaterial
-from abstrak.providers.contracts import ChatMessage, MessageRole
+from abstrak.providers.contracts import MessageRole
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -84,9 +85,12 @@ class FakeCheckout:
         return f"Implement {material.name} for {target} at {precision}."
 
 
-def _completion(text: str, request_id: str) -> AgentCompletion:
+def _completion(
+    text: str, request_id: str, *, reasoning_content: str | None = None
+) -> AgentCompletion:
     return AgentCompletion(
         text=text,
+        reasoning_content=reasoning_content,
         protocol="chat_completions",
         provider_request_id=request_id,
         returned_model="test-returned",
@@ -122,9 +126,9 @@ def _result(cell_id: str, *, speedup: float | None, correct: bool = True) -> Eva
 class FakeClient:
     def __init__(self, completions: list[AgentCompletion | Exception]) -> None:
         self.completions = completions
-        self.messages: list[tuple[ChatMessage, ...]] = []
+        self.messages: list[tuple[AgentMessage, ...]] = []
 
-    def complete(self, messages: list[ChatMessage]) -> AgentCompletion:
+    def complete(self, messages: list[AgentMessage]) -> AgentCompletion:
         self.messages.append(tuple(messages))
         item = self.completions.pop(0)
         if isinstance(item, Exception):
@@ -184,7 +188,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     study = _study(iterations=3)
     client = FakeClient(
         [
-            _completion(_candidate("first"), "r1"),
+            _completion(_candidate("first"), "r1", reasoning_content="first reasoning trace"),
             _completion("not a code block", "r2"),
             _completion(_candidate("third"), "r3"),
         ]
@@ -209,6 +213,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     assert evaluator.jobs[0].cell_id.endswith("i001")
     assert evaluator.jobs[1].cell_id.endswith("i003")
     assert len(client.messages) == 3
+    assert client.messages[1][-2].reasoning_content == "first reasoning trace"
     assert "speedup_vs_reference: 1.2" in client.messages[1][-1].content
     assert "Candidate extraction failed" in client.messages[2][-1].content
     assert "best_correct_speedup_so_far: 1.2" in client.messages[2][-1].content
@@ -365,7 +370,14 @@ class FalsyFakeTransport(FakeTransport):
             {
                 "id": "chat-1",
                 "model": "returned-chat",
-                "choices": [{"message": {"content": _candidate("chat")}}],
+                "choices": [
+                    {
+                        "message": {
+                            "content": _candidate("chat"),
+                            "reasoning_content": "chat reasoning trace",
+                        }
+                    }
+                ],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 4},
             },
         ),
@@ -394,15 +406,18 @@ def test_pilot_provider_uses_requested_protocol_and_xhigh(
         environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
         transport=transport,
     )
-    completion = client.complete([ChatMessage(role=MessageRole.USER, content="prompt")])
+    completion = client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
     request = transport.calls[0]
     assert completion.text.startswith("```python")
     token_key = "max_output_tokens" if protocol == "responses" else "max_completion_tokens"
     assert request[token_key] == 16384
     if protocol == "responses":
         assert request["reasoning"] == {"effort": "xhigh"}
+        assert completion.reasoning_content is None
     else:
         assert request["reasoning_effort"] == "xhigh"
+        assert completion.reasoning_content == "chat reasoning trace"
+    assert "reasoning_content" not in request.get("messages", request.get("input"))[0]
     assert request["api_key"] == "secret"
     assert completion.sanitized_request["api_key_env"] == "TEST_API_KEY"
     assert "secret" not in json.dumps(completion.sanitized_request)
@@ -420,5 +435,41 @@ def test_pilot_provider_keeps_an_explicit_falsy_transport() -> None:
         environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
         transport=transport,
     )
-    client.complete([ChatMessage(role=MessageRole.USER, content="prompt")])
+    client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
     assert transport.call_count == 1
+
+
+def test_pilot_provider_replays_reasoning_content_for_chat_history() -> None:
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "content": _candidate("next"),
+                    "provider_specific_fields": {"reasoning_content": "next reasoning trace"},
+                }
+            }
+        ],
+        "usage": {},
+    }
+    transport = FakeTransport(payload)
+    client = PilotProviderClient(
+        _model(),
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+
+    completion = client.complete(
+        [
+            AgentMessage(role=MessageRole.USER, content="prompt"),
+            AgentMessage(
+                role=MessageRole.ASSISTANT,
+                content=_candidate("previous"),
+                reasoning_content="previous reasoning trace",
+            ),
+            AgentMessage(role=MessageRole.USER, content="evaluation feedback"),
+        ]
+    )
+
+    assert completion.reasoning_content == "next reasoning trace"
+    assert transport.calls[0]["messages"][1]["reasoning_content"] == ("previous reasoning trace")

@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 
+from abstrak.evaluation.agent_contracts import AgentGenerationConfig, AgentModelSpec
+from abstrak.evaluation.agent_provider import AgentMessage, PilotProviderClient
 from abstrak.providers.client import ProviderClient
 from abstrak.providers.contracts import (
     ChatMessage,
@@ -27,6 +29,7 @@ from abstrak.providers.manifests import (
 
 class OpenAIStubHandler(BaseHTTPRequestHandler):
     response_status = 200
+    response_reasoning_content: str | None = None
     request_count = 0
     request_path = ""
     request_headers: dict[str, str] = {}
@@ -40,6 +43,12 @@ class OpenAIStubHandler(BaseHTTPRequestHandler):
         type(self).request_body = json.loads(self.rfile.read(content_length))
 
         if type(self).response_status == 200:
+            message = {
+                "role": "assistant",
+                "content": '{"action":"finish","nonce":"integration"}',
+            }
+            if type(self).response_reasoning_content is not None:
+                message["reasoning_content"] = type(self).response_reasoning_content
             payload = {
                 "id": "stub-response-1",
                 "object": "chat.completion",
@@ -49,10 +58,7 @@ class OpenAIStubHandler(BaseHTTPRequestHandler):
                     {
                         "index": 0,
                         "finish_reason": "stop",
-                        "message": {
-                            "role": "assistant",
-                            "content": '{"action":"finish","nonce":"integration"}',
-                        },
+                        "message": message,
                     }
                 ],
                 "usage": {
@@ -82,7 +88,9 @@ class OpenAIStubHandler(BaseHTTPRequestHandler):
 
 
 @contextmanager
-def openai_stub(status: int) -> Iterator[tuple[ThreadingHTTPServer, type[OpenAIStubHandler]]]:
+def openai_stub(
+    status: int, *, reasoning_content: str | None = None
+) -> Iterator[tuple[ThreadingHTTPServer, type[OpenAIStubHandler]]]:
     class Handler(OpenAIStubHandler):
         response_status = status
         request_count = 0
@@ -90,6 +98,7 @@ def openai_stub(status: int) -> Iterator[tuple[ThreadingHTTPServer, type[OpenAIS
         request_headers = {}
         request_body = {}
 
+    Handler.response_reasoning_content = reasoning_content
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -164,3 +173,42 @@ def test_real_litellm_transport_does_not_retry_server_error() -> None:
     assert handler.request_count == 1
     assert client.transport.call_count == 1
     assert captured.value.record.category == ErrorCategory.SERVER_ERROR
+
+
+def test_real_litellm_transport_preserves_deepseek_reasoning_history() -> None:
+    with openai_stub(200, reasoning_content="Returned reasoning trace") as (server, handler):
+        base_url = f"http://127.0.0.1:{server.server_port}/v1"
+        client = PilotProviderClient(
+            AgentModelSpec(
+                id="deepseek-v4-flash",
+                protocol="chat_completions",
+                litellm_provider="deepseek",
+                api_model="deepseek/deepseek-v4-flash",
+                api_key_env="STUB_API_KEY",
+                base_url_env="STUB_BASE_URL",
+            ),
+            AgentGenerationConfig(),
+            environment={"STUB_API_KEY": "stub-secret", "STUB_BASE_URL": base_url},
+        )
+
+        first = client.complete([AgentMessage(role=MessageRole.USER, content="Original task")])
+        assert first.reasoning_content == "Returned reasoning trace"
+
+        client.complete(
+            [
+                AgentMessage(role=MessageRole.USER, content="Original task"),
+                AgentMessage(
+                    role=MessageRole.ASSISTANT,
+                    content=first.text,
+                    reasoning_content=first.reasoning_content,
+                ),
+                AgentMessage(role=MessageRole.USER, content="Evaluation feedback"),
+            ]
+        )
+
+    assert handler.request_count == 2
+    assert handler.request_body["messages"][1] == {
+        "role": "assistant",
+        "content": '{"action":"finish","nonce":"integration"}',
+        "reasoning_content": "Returned reasoning trace",
+    }

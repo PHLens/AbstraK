@@ -41,7 +41,8 @@ uv run abstrak-kernelbench agent-eval \
 ```
 
 Collect model turns. Each parseable response is evaluated immediately by the SSH worker, and
-the result is appended to the next model turn:
+the result is appended to the next model turn. For thinking-mode Chat Completions models, the
+assistant's returned `reasoning_content` is preserved in that multi-turn history:
 
 ```bash
 uv run abstrak-kernelbench agent-collect \

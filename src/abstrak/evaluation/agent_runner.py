@@ -28,6 +28,7 @@ from abstrak.evaluation.agent_contracts import (
 from abstrak.evaluation.agent_provider import (
     AgentCompletion,
     AgentCompletionClient,
+    AgentMessage,
     AgentProviderError,
 )
 from abstrak.evaluation.agent_worker import AgentEvaluationJob
@@ -38,7 +39,7 @@ from abstrak.evaluation.contracts import (
     TargetName,
 )
 from abstrak.evaluation.kernelbench import KernelBenchCheckout, TaskMaterial
-from abstrak.providers.contracts import ChatMessage, MessageRole
+from abstrak.providers.contracts import MessageRole
 
 RUNNABLE_OUTPUT_CONTRACT = """
 Return exactly one Python code block and nothing else. The block must define the complete
@@ -135,13 +136,11 @@ def build_initial_messages(
     material: TaskMaterial,
     target: TargetName,
     precision: Precision,
-) -> list[ChatMessage]:
+) -> list[AgentMessage]:
     prompt = (
-        checkout.zero_shot_prompt(material, target, precision)
-        + "\n"
-        + RUNNABLE_OUTPUT_CONTRACT
+        checkout.zero_shot_prompt(material, target, precision) + "\n" + RUNNABLE_OUTPUT_CONTRACT
     )
-    return [ChatMessage(role=MessageRole.USER, content=prompt)]
+    return [AgentMessage(role=MessageRole.USER, content=prompt)]
 
 
 def _remote_timeout_result(job: AgentEvaluationJob, error: str) -> EvaluationResult:
@@ -416,12 +415,8 @@ class AgentCollectionRunner:
             cached_input_tokens=(completion.cached_input_tokens if completion else None),
             output_tokens=(completion.output_tokens if completion else None),
             reasoning_tokens=(completion.reasoning_tokens if completion else None),
-            provider_elapsed_ms=(
-                completion.elapsed_ms if completion else provider_elapsed_ms
-            ),
-            response_path=(
-                _relative(response_path, self.run_directory) if response_path else None
-            ),
+            provider_elapsed_ms=(completion.elapsed_ms if completion else provider_elapsed_ms),
+            response_path=(_relative(response_path, self.run_directory) if response_path else None),
             candidate_path=(
                 _relative(candidate_path, self.run_directory) if candidate_path else None
             ),
@@ -442,9 +437,7 @@ class AgentCollectionRunner:
         attempts_path: Path,
     ) -> list[AgentAttemptRecord]:
         identifier = trajectory_id(model.id, task.ref, target)
-        messages = build_initial_messages(
-            self.checkout, material, target, self.study.precision
-        )
+        messages = build_initial_messages(self.checkout, material, target, self.study.precision)
         records: list[AgentAttemptRecord] = []
         best_speedup: float | None = None
         for iteration in range(1, self.iterations + 1):
@@ -457,9 +450,7 @@ class AgentCollectionRunner:
                 with self._heartbeat(f"{identifier} iteration={iteration} provider request"):
                     completion = client.complete(messages)
             except AgentProviderError as error:
-                self._log(
-                    f"{identifier} iteration={iteration} provider failed: {error}"
-                )
+                self._log(f"{identifier} iteration={iteration} provider failed: {error}")
                 _write_json(
                     response_path,
                     {
@@ -493,12 +484,17 @@ class AgentCollectionRunner:
                 f"output_tokens={completion.output_tokens}"
             )
             _write_json(response_path, _response_payload(completion))
-            messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=completion.text))
+            messages.append(
+                AgentMessage(
+                    role=MessageRole.ASSISTANT,
+                    content=completion.text,
+                    reasoning_content=completion.reasoning_content,
+                )
+            )
             extracted = extract_runnable_candidate(completion.text)
             if extracted.code is None:
                 self._log(
-                    f"{identifier} iteration={iteration} candidate parse failed: "
-                    f"{extracted.error}"
+                    f"{identifier} iteration={iteration} candidate parse failed: {extracted.error}"
                 )
                 records.append(
                     self._attempt(
@@ -517,7 +513,7 @@ class AgentCollectionRunner:
                     )
                 )
                 messages.append(
-                    ChatMessage(
+                    AgentMessage(
                         role=MessageRole.USER,
                         content=_parse_feedback(extracted.error or "unknown error", best_speedup),
                     )
@@ -545,9 +541,7 @@ class AgentCollectionRunner:
                 with self._heartbeat(f"{identifier} iteration={iteration} SSH evaluation"):
                     outcome = self.evaluator.evaluate(job)
             except AgentEvaluationTransportError as error:
-                self._log(
-                    f"{identifier} iteration={iteration} SSH evaluation failed: {error}"
-                )
+                self._log(f"{identifier} iteration={iteration} SSH evaluation failed: {error}")
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 log_path.write_text(error.log, encoding="utf-8")
                 records.append(
@@ -603,7 +597,7 @@ class AgentCollectionRunner:
                 )
             )
             messages.append(
-                ChatMessage(
+                AgentMessage(
                     role=MessageRole.USER,
                     content=_evaluation_feedback(result, best_speedup),
                 )

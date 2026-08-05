@@ -10,7 +10,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from abstrak.evaluation.agent_contracts import AgentGenerationConfig, AgentModelSpec
-from abstrak.providers.contracts import ChatMessage
+from abstrak.providers.contracts import MessageRole
 from abstrak.providers.native_transport import LiteLLMNativeTransport, NativeTransport
 
 
@@ -20,10 +20,19 @@ class AgentProviderError(RuntimeError):
         self.elapsed_ms = elapsed_ms
 
 
+class AgentMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    role: MessageRole
+    content: str = Field(min_length=1)
+    reasoning_content: str | None = Field(default=None, min_length=1)
+
+
 class AgentCompletion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     text: str = Field(min_length=1)
+    reasoning_content: str | None = Field(default=None, min_length=1)
     protocol: str
     provider_request_id: str | None = None
     returned_model: str | None = None
@@ -37,7 +46,7 @@ class AgentCompletion(BaseModel):
 
 
 class AgentCompletionClient(Protocol):
-    def complete(self, messages: Sequence[ChatMessage]) -> AgentCompletion: ...
+    def complete(self, messages: Sequence[AgentMessage]) -> AgentCompletion: ...
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -65,7 +74,7 @@ def _optional_int(mapping: Mapping[str, Any], *paths: tuple[str, ...]) -> int | 
     return None
 
 
-def _chat_text(payload: Mapping[str, Any]) -> str:
+def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
         raise ValueError("chat response has no choice")
@@ -75,7 +84,17 @@ def _chat_text(payload: Mapping[str, Any]) -> str:
     content = message.get("content")
     if not isinstance(content, str) or not content:
         raise ValueError("chat response has no text")
-    return content
+    reasoning_content = message.get("reasoning_content")
+    if not isinstance(reasoning_content, str) or not reasoning_content:
+        provider_fields = message.get("provider_specific_fields")
+        reasoning_content = (
+            provider_fields.get("reasoning_content")
+            if isinstance(provider_fields, Mapping)
+            else None
+        )
+    if not isinstance(reasoning_content, str) or not reasoning_content:
+        reasoning_content = None
+    return content, reasoning_content
 
 
 def _responses_text(payload: Mapping[str, Any]) -> str:
@@ -137,8 +156,8 @@ class PilotProviderClient:
     def artifact_secrets(self) -> tuple[str, ...]:
         return self._api_key, self._base_url or ""
 
-    def _request(self, messages: Sequence[ChatMessage]) -> tuple[dict[str, Any], dict[str, Any]]:
-        rendered = [message.model_dump(mode="json") for message in messages]
+    def _request(self, messages: Sequence[AgentMessage]) -> tuple[dict[str, Any], dict[str, Any]]:
+        rendered = [message.model_dump(mode="json", exclude_none=True) for message in messages]
         common: dict[str, Any] = {
             "model": self.model.api_model,
             "stream": False,
@@ -175,7 +194,7 @@ class PilotProviderClient:
         }
         return actual, sanitized
 
-    def complete(self, messages: Sequence[ChatMessage]) -> AgentCompletion:
+    def complete(self, messages: Sequence[AgentMessage]) -> AgentCompletion:
         actual, sanitized = self._request(messages)
         started = time.perf_counter()
         try:
@@ -185,11 +204,11 @@ class PilotProviderClient:
                 response = self.transport.responses(**actual)
             elapsed_ms = (time.perf_counter() - started) * 1000
             payload = _mapping(response)
-            text = (
-                _chat_text(payload)
-                if self.model.protocol == "chat_completions"
-                else _responses_text(payload)
-            )
+            if self.model.protocol == "chat_completions":
+                text, reasoning_content = _chat_output(payload)
+            else:
+                text = _responses_text(payload)
+                reasoning_content = None
         except Exception as error:
             elapsed_ms = (time.perf_counter() - started) * 1000
             message = str(error).replace(self._api_key, "<redacted>")
@@ -203,13 +222,10 @@ class PilotProviderClient:
         usage = usage if isinstance(usage, Mapping) else {}
         return AgentCompletion(
             text=text,
+            reasoning_content=reasoning_content,
             protocol=self.model.protocol,
-            provider_request_id=(
-                str(payload["id"]) if payload.get("id") is not None else None
-            ),
-            returned_model=(
-                str(payload["model"]) if payload.get("model") is not None else None
-            ),
+            provider_request_id=(str(payload["id"]) if payload.get("id") is not None else None),
+            returned_model=(str(payload["model"]) if payload.get("model") is not None else None),
             input_tokens=_optional_int(usage, ("input_tokens",), ("prompt_tokens",)),
             cached_input_tokens=_optional_int(
                 usage,
