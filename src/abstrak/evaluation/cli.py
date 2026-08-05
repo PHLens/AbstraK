@@ -1,4 +1,4 @@
-"""CLI for the naive single-turn KernelBench capability screen."""
+"""CLI for KernelBench screening and iterative DSL-target pilots."""
 
 from __future__ import annotations
 
