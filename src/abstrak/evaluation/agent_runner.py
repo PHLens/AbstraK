@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import ast
+import contextlib
 import json
 import re
 import shlex
 import subprocess
+import sys
+import threading
+import time
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -83,6 +87,11 @@ class AgentCollectionResult(BaseModel):
 
 
 ProviderFactory = Callable[[AgentModelSpec], AgentCompletionClient]
+ProgressSink = Callable[[str], None]
+
+
+def _stderr_progress(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
 
 
 def default_agent_run_id() -> str:
@@ -313,6 +322,7 @@ class AgentCollectionRunner:
         run_id: str | None = None,
         iterations: int | None = None,
         device: str = "cuda:0",
+        progress: ProgressSink = _stderr_progress,
     ) -> None:
         self.study = study
         self.checkout = checkout
@@ -324,7 +334,30 @@ class AgentCollectionRunner:
         if not 1 <= self.iterations <= 100:
             raise AgentCollectionError("iterations must be between 1 and 100")
         self.device = device
+        self.progress = progress
         self.run_directory = Path(artifact_root).expanduser().resolve() / self.run_id
+
+    def _log(self, message: str) -> None:
+        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%SZ")
+        self.progress(f"[agent {timestamp}] {message}")
+
+    @contextlib.contextmanager
+    def _heartbeat(self, label: str, *, interval_seconds: float = 30.0) -> Iterator[None]:
+        stopped = threading.Event()
+        started = time.monotonic()
+
+        def report() -> None:
+            while not stopped.wait(interval_seconds):
+                elapsed = int(time.monotonic() - started)
+                self._log(f"{label} still running elapsed={elapsed}s")
+
+        thread = threading.Thread(target=report, daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stopped.set()
+            thread.join()
 
     def _record(self, attempts_path: Path, record: AgentAttemptRecord) -> None:
         with attempts_path.open("a", encoding="utf-8") as handle:
@@ -416,9 +449,17 @@ class AgentCollectionRunner:
         best_speedup: float | None = None
         for iteration in range(1, self.iterations + 1):
             response_path, candidate_path, log_path = self._paths(identifier, iteration)
+            self._log(
+                f"{identifier} iteration={iteration}/{self.iterations} provider request started "
+                f"timeout={model.timeout_seconds:g}s"
+            )
             try:
-                completion = client.complete(messages)
+                with self._heartbeat(f"{identifier} iteration={iteration} provider request"):
+                    completion = client.complete(messages)
             except AgentProviderError as error:
+                self._log(
+                    f"{identifier} iteration={iteration} provider failed: {error}"
+                )
                 _write_json(
                     response_path,
                     {
@@ -446,10 +487,19 @@ class AgentCollectionRunner:
                 )
                 break
 
+            self._log(
+                f"{identifier} iteration={iteration} provider completed "
+                f"elapsed={completion.elapsed_ms / 1000:.1f}s "
+                f"output_tokens={completion.output_tokens}"
+            )
             _write_json(response_path, _response_payload(completion))
             messages.append(ChatMessage(role=MessageRole.ASSISTANT, content=completion.text))
             extracted = extract_runnable_candidate(completion.text)
             if extracted.code is None:
+                self._log(
+                    f"{identifier} iteration={iteration} candidate parse failed: "
+                    f"{extracted.error}"
+                )
                 records.append(
                     self._attempt(
                         attempts_path=attempts_path,
@@ -487,9 +537,17 @@ class AgentCollectionRunner:
                 device=self.device,
                 evaluator=self.study.evaluator,
             )
+            self._log(
+                f"{identifier} iteration={iteration} SSH evaluation started "
+                f"timeout={self.study.evaluator.timeout_seconds}s"
+            )
             try:
-                outcome = self.evaluator.evaluate(job)
+                with self._heartbeat(f"{identifier} iteration={iteration} SSH evaluation"):
+                    outcome = self.evaluator.evaluate(job)
             except AgentEvaluationTransportError as error:
+                self._log(
+                    f"{identifier} iteration={iteration} SSH evaluation failed: {error}"
+                )
                 log_path.parent.mkdir(parents=True, exist_ok=True)
                 log_path.write_text(error.log, encoding="utf-8")
                 records.append(
@@ -518,6 +576,12 @@ class AgentCollectionRunner:
             result = outcome.result
             if result.correctness and result.performance_ratio is not None:
                 best_speedup = max(best_speedup or 0.0, result.performance_ratio)
+            self._log(
+                f"{identifier} iteration={iteration} evaluation completed "
+                f"status={result.status} compiled={result.compiled} "
+                f"correct={result.correctness} speedup={result.performance_ratio} "
+                f"best={best_speedup}"
+            )
             records.append(
                 self._attempt(
                     attempts_path=attempts_path,
@@ -577,15 +641,27 @@ class AgentCollectionRunner:
             },
         }
         _write_json(raw / "run.json", run_payload)
+        self._log(
+            f"run={self.run_id} started trajectories={self.study.trajectory_count} "
+            f"iterations={self.iterations} max_requests="
+            f"{self.study.trajectory_count * self.iterations}"
+        )
 
         try:
             clients = {model.id: self.provider_factory(model) for model in self.study.models}
         except (OSError, ValueError) as error:
             raise AgentCollectionError(f"cannot initialize provider clients: {error}") from error
         records: list[AgentAttemptRecord] = []
+        trajectory_index = 0
         for model in self.study.models:
             for task in self.study.tasks:
                 for target in self.study.targets:
+                    trajectory_index += 1
+                    identifier = trajectory_id(model.id, task.ref, target)
+                    self._log(
+                        f"trajectory={trajectory_index}/{self.study.trajectory_count} "
+                        f"started id={identifier}"
+                    )
                     records.extend(
                         self._run_trajectory(
                             model=model,
@@ -595,6 +671,10 @@ class AgentCollectionRunner:
                             target=target,
                             attempts_path=attempts_path,
                         )
+                    )
+                    self._log(
+                        f"trajectory={trajectory_index}/{self.study.trajectory_count} "
+                        f"completed id={identifier}"
                     )
 
         generation_counts = Counter(record.generation_status for record in records)
@@ -608,6 +688,11 @@ class AgentCollectionRunner:
             }
         )
         _write_json(raw / "run.json", run_payload)
+        self._log(
+            f"run={self.run_id} completed attempts={len(records)} "
+            f"generation={dict(sorted(generation_counts.items()))} "
+            f"evaluation={dict(sorted(evaluation_counts.items()))}"
+        )
         return AgentCollectionResult(
             run_directory=self.run_directory,
             attempts=len(records),

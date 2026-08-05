@@ -190,6 +190,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
         ]
     )
     evaluator = FakeEvaluator([1.2, 1.1])
+    progress: list[str] = []
     runner = AgentCollectionRunner(
         study=study,
         checkout=FakeCheckout(),  # type: ignore[arg-type]
@@ -198,6 +199,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
         worker_kernelbench_root="/worker/KernelBench",
         artifact_root=tmp_path,
         run_id="run-1",
+        progress=progress.append,
     )
 
     outcome = runner.run()
@@ -223,6 +225,9 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     assert [item["best_speedup"] for item in attempts] == [1.2, 1.2, 1.2]
     assert (outcome.run_directory / "raw" / "candidates").is_dir()
     assert (outcome.run_directory / "raw" / "responses").is_dir()
+    assert any("iteration=1/3 provider request started" in line for line in progress)
+    assert any("iteration=1 SSH evaluation started" in line for line in progress)
+    assert any("run=run-1 completed attempts=3" in line for line in progress)
 
 
 def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path) -> None:
