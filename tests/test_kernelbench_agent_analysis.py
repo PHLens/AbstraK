@@ -18,8 +18,8 @@ MODELS = ("deepseek-v4-flash", "gpt-5.6-luna")
 TARGETS = ("triton", "tilelang", "cute")
 TASKS = (
     ("level1-problem1", "Square_Matrix_Multiplication"),
-    ("level1-problem3", "Batched_Matrix_Multiplication"),
-    ("level1-problem40", "LayerNorm"),
+    ("level1-problem24", "LogSoftmax"),
+    ("level2-problem1", "Conv2D_ReLU_BiasAdd"),
     ("level2-problem76", "Gemm_Add_ReLU"),
 )
 
@@ -52,9 +52,9 @@ def _study_payload() -> dict[str, Any]:
         "targets": list(TARGETS),
         "tasks": [
             {"level": 1, "problem_id": 1, "stratum": "dense"},
-            {"level": 1, "problem_id": 3, "stratum": "batched"},
-            {"level": 1, "problem_id": 40, "stratum": "normalization"},
-            {"level": 2, "problem_id": 76, "stratum": "fusion"},
+            {"level": 1, "problem_id": 24, "stratum": "reduction"},
+            {"level": 2, "problem_id": 1, "stratum": "conv-fusion"},
+            {"level": 2, "problem_id": 76, "stratum": "gemm-fusion"},
         ],
         "precision": "fp16",
         "iterations": 3,

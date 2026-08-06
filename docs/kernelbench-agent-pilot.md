@@ -8,9 +8,10 @@ The default study is [`configs/studies/kernelbench-agent-pilot.yaml`](../configs
 It contains 2 models x 4 KernelBench tasks x 3 targets and defaults to 4 turns per trajectory:
 
 - models: `deepseek-v4-flash` through Chat Completions and `gpt-5.6-luna` through Responses;
-  both use `xhigh` reasoning;
+  both use `xhigh` reasoning; the DeepSeek request timeout is 1200 seconds;
 - targets: `triton`, `tilelang`, and `cute`;
-- tasks: Level 1 problems 1, 3, and 40, plus Level 2 problem 76;
+- tasks: Level 1 problem 1 Square Matmul and problem 24 LogSoftmax, plus Level 2 problem 1
+  Conv2D+ReLU+BiasAdd and problem 76 GEMM+Add+ReLU;
 - precision: `fp16`.
 
 ## Separate stages
@@ -43,9 +44,11 @@ uv run abstrak-kernelbench agent-eval \
   --worker-kernelbench-root /srv/KernelBench
 ```
 
-Collect model turns. Each parseable response is evaluated immediately by the SSH worker, and
-the result is appended to the next model turn. For thinking-mode Chat Completions models, the
-assistant's returned `reasoning_content` is preserved in that multi-turn history:
+Collect model turns. Each parseable response is evaluated immediately by the SSH worker. The next
+request contains the initial task and concise target contract, the latest assistant response and
+its evaluator feedback, plus the best correct implementation when the latest attempt regresses.
+Older turns are discarded. For thinking-mode Chat Completions models, the latest assistant's
+returned `reasoning_content` is preserved:
 
 ```bash
 uv run abstrak-kernelbench agent-collect \
@@ -104,6 +107,7 @@ artifacts/kernelbench-agent/<run-id>/raw/
   candidates/<trajectory>/iteration-XXX.py
   responses/<trajectory>/iteration-XXX.json
   worker-logs/<trajectory>/iteration-XXX.log
+  worker-logs/<trajectory>/iteration-XXX.result.json
 ```
 
 `agent-analyze` writes `analysis/metrics.json` and `analysis/metrics.csv`. `agent-plot` writes:

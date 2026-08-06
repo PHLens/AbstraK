@@ -11,7 +11,7 @@ models:
     api_model: deepseek/deepseek-v4-flash
     api_key_env: ABSTRAK_DEEPSEEK_API_KEY
     base_url_env: ABSTRAK_DEEPSEEK_BASE_URL
-    timeout_seconds: 600
+    timeout_seconds: 1200
 targets:
   - triton
 tasks:

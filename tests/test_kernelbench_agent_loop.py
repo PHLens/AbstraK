@@ -26,10 +26,17 @@ from abstrak.evaluation.agent_runner import (
     AgentCollectionRunner,
     AgentEvaluationOutcome,
     SshAgentEvaluator,
+    _evaluation_feedback,
+    build_initial_messages,
     extract_runnable_candidate,
 )
 from abstrak.evaluation.agent_worker import AgentEvaluationJob
-from abstrak.evaluation.contracts import EvaluationResult, KernelBenchSource, KernelBenchTask
+from abstrak.evaluation.contracts import (
+    EvaluationResult,
+    KernelBenchSource,
+    KernelBenchTask,
+    TargetName,
+)
 from abstrak.evaluation.kernelbench import TaskMaterial
 from abstrak.providers.contracts import MessageRole
 
@@ -158,6 +165,32 @@ def test_extract_runnable_candidate_requires_one_complete_modelnew() -> None:
     assert extract_runnable_candidate("no code").code is None
 
 
+@pytest.mark.parametrize(
+    ("target", "required_api"),
+    [
+        ("triton", "@triton.jit"),
+        ("tilelang", "@T.prim_func"),
+        ("cute", "import cutlass.cute as cute"),
+    ],
+)
+def test_initial_messages_include_concise_target_contract(
+    target: TargetName, required_api: str
+) -> None:
+    messages = build_initial_messages(
+        FakeCheckout(),
+        FakeCheckout().material,
+        target,
+        "fp16",  # type: ignore[arg-type]
+    )
+
+    assert len(messages) == 1
+    assert "TARGET CONTRACT (must follow)" in messages[0].content
+    assert required_api in messages[0].content
+    assert "## Model scaffold and launch example" not in messages[0].content
+    if target == "cute":
+        assert "compile a custom CUDA extension" in " ".join(messages[0].content.split())
+
+
 def test_pilot_study_is_the_small_24_trajectory_matrix() -> None:
     study = load_agent_study(
         REPOSITORY_ROOT / "configs" / "studies" / "kernelbench-agent-pilot.yaml"
@@ -169,7 +202,14 @@ def test_pilot_study_is_the_small_24_trajectory_matrix() -> None:
         ("deepseek-v4-flash", "chat_completions"),
         ("gpt-5.6-luna", "responses"),
     ]
+    assert [task.ref for task in study.tasks] == [
+        "level1-problem1",
+        "level1-problem24",
+        "level2-problem1",
+        "level2-problem76",
+    ]
     assert study.generation.reasoning_effort == "xhigh"
+    assert [model.timeout_seconds for model in study.models] == [1200.0, 600.0]
 
 
 def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
@@ -182,6 +222,7 @@ def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
     assert study.targets == ("triton",)
     assert [task.ref for task in study.tasks] == ["level1-problem1"]
     assert study.generation.reasoning_effort == "xhigh"
+    assert study.models[0].timeout_seconds == 1200.0
 
 
 def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
@@ -192,13 +233,14 @@ def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
     assert study.targets == ("triton", "tilelang", "cute")
     assert [task.ref for task in study.tasks] == [
         "level1-problem1",
-        "level1-problem3",
-        "level1-problem40",
+        "level1-problem24",
+        "level2-problem1",
         "level2-problem76",
     ]
     assert study.iterations == 4
     assert study.trajectory_count == 12
     assert study.request_count == 48
+    assert study.models[0].timeout_seconds == 1200.0
 
 
 def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path) -> None:
@@ -206,7 +248,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     client = FakeClient(
         [
             _completion(_candidate("first"), "r1", reasoning_content="first reasoning trace"),
-            _completion("not a code block", "r2"),
+            _completion("not a code block", "r2", reasoning_content="second reasoning trace"),
             _completion(_candidate("third"), "r3"),
         ]
     )
@@ -230,10 +272,22 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     assert evaluator.jobs[0].cell_id.endswith("i001")
     assert evaluator.jobs[1].cell_id.endswith("i003")
     assert len(client.messages) == 3
-    assert client.messages[1][-2].reasoning_content == "first reasoning trace"
+    assert [len(request) for request in client.messages] == [1, 3, 3]
+    assert [message.role for message in client.messages[2]] == [
+        MessageRole.USER,
+        MessageRole.ASSISTANT,
+        MessageRole.USER,
+    ]
+    assert client.messages[1][1].reasoning_content == "first reasoning trace"
     assert "speedup_vs_reference: 1.2" in client.messages[1][-1].content
+    assert client.messages[2][1].content == "not a code block"
+    assert client.messages[2][1].reasoning_content == "second reasoning trace"
     assert "Candidate extraction failed" in client.messages[2][-1].content
     assert "best_correct_speedup_so_far: 1.2" in client.messages[2][-1].content
+    assert "label = 'first'" in client.messages[2][-1].content
+    assert all(
+        message.reasoning_content != "first reasoning trace" for message in client.messages[2]
+    )
 
     attempts = [
         json.loads(line)
@@ -250,6 +304,135 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     assert any("iteration=1/3 provider request started" in line for line in progress)
     assert any("iteration=1 SSH evaluation started" in line for line in progress)
     assert any("run=run-1 completed attempts=3" in line for line in progress)
+
+
+def test_feedback_returns_structured_diagnostics_and_bounds_log_fallback() -> None:
+    failed = _result("cell-1", speedup=None, correct=False).model_copy(
+        update={
+            "metadata": {
+                "compilation_error_name": "TypeError",
+                "compilation_error": "unexpected keyword argument 'cuda'",
+                "runtime_environment": {"package_versions": {"torch": "secret-noise"}},
+                "runtime_error_traceback": "unbounded traceback",
+            }
+        }
+    )
+
+    structured = _evaluation_feedback(failed, None, "worker log should not win")
+
+    assert "unexpected keyword argument 'cuda'" in structured
+    assert "runtime_environment" not in structured
+    assert "unbounded traceback" not in structured
+    assert "worker log should not win" not in structured
+
+    log_only = "diagnostic head " + "x" * 5000 + " diagnostic tail"
+    fallback = _evaluation_feedback(_result("cell-2", speedup=None, correct=False), None, log_only)
+    assert "diagnostic head" in fallback
+    assert "[diagnostic truncated]" in fallback
+    assert "diagnostic tail" in fallback
+    assert len(fallback) < 4500
+
+    timeout = _result("cell-timeout", speedup=None, correct=False).model_copy(
+        update={"status": "timeout", "error": "remote worker timed out"}
+    )
+    timeout_feedback = _evaluation_feedback(timeout, None, "partial compiler stderr")
+    assert "remote worker timed out" in timeout_feedback
+    assert "partial compiler stderr" in timeout_feedback
+
+    successful = _evaluation_feedback(
+        _result("cell-3", speedup=1.2), 1.2, "successful worker noise"
+    )
+    assert "successful worker noise" not in successful
+
+
+def test_runner_passes_worker_diagnostic_and_retains_best_candidate(tmp_path: Path) -> None:
+    study = _study(iterations=3)
+    client = FakeClient(
+        [
+            _completion(_candidate("best"), "r1", reasoning_content="reasoning one"),
+            _completion(_candidate("slower"), "r2", reasoning_content="reasoning two"),
+            _completion(_candidate("final"), "r3"),
+        ]
+    )
+
+    class DiagnosticEvaluator(FakeEvaluator):
+        def evaluate(self, job: AgentEvaluationJob) -> AgentEvaluationOutcome:
+            outcome = super().evaluate(job)
+            if len(self.jobs) == 1:
+                result = outcome.result.model_copy(
+                    update={"metadata": {"artifact_only": "persisted diagnostic"}}
+                )
+                return outcome.model_copy(update={"result": result})
+            if len(self.jobs) == 2:
+                return outcome.model_copy(update={"log": "second attempt diagnostic"})
+            return outcome
+
+    evaluator = DiagnosticEvaluator([1.2, None, 1.1])
+    AgentCollectionRunner(
+        study=study,
+        checkout=FakeCheckout(),  # type: ignore[arg-type]
+        provider_factory=lambda model: client,
+        evaluator=evaluator,
+        worker_kernelbench_root="/worker/KernelBench",
+        artifact_root=tmp_path,
+        run_id="bounded-incumbent",
+    ).run()
+
+    third_request = client.messages[2]
+    assert len(third_request) == 3
+    assert third_request[1].content == _candidate("slower")
+    assert third_request[1].reasoning_content == "reasoning two"
+    assert "second attempt diagnostic" in third_request[2].content
+    assert "best_correct_speedup_so_far: 1.2" in third_request[2].content
+    assert "label = 'best'" in third_request[2].content
+    assert "reasoning one" not in "\n".join(message.content for message in third_request)
+    result_path = next(
+        (tmp_path / "bounded-incumbent" / "raw" / "worker-logs").rglob(
+            "iteration-001.result.json"
+        )
+    )
+    persisted_result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert persisted_result["metadata"] == {"artifact_only": "persisted diagnostic"}
+
+
+def test_correct_candidate_without_timing_is_retained_as_incumbent(tmp_path: Path) -> None:
+    study = _study(iterations=3)
+    client = FakeClient(
+        [
+            _completion(_candidate("correct-unmeasured"), "r1"),
+            _completion(_candidate("incorrect"), "r2"),
+            _completion(_candidate("final"), "r3"),
+        ]
+    )
+
+    class UnmeasuredEvaluator:
+        def __init__(self) -> None:
+            self.results = [
+                _result("unused", speedup=None, correct=True).model_copy(
+                    update={"kernel_runtime_ms": None, "reference_runtime_ms": None}
+                ),
+                _result("unused", speedup=None, correct=False),
+                _result("unused", speedup=1.1),
+            ]
+
+        def evaluate(self, job: AgentEvaluationJob) -> AgentEvaluationOutcome:
+            return AgentEvaluationOutcome(
+                result=self.results.pop(0).model_copy(update={"cell_id": job.cell_id})
+            )
+
+    AgentCollectionRunner(
+        study=study,
+        checkout=FakeCheckout(),  # type: ignore[arg-type]
+        provider_factory=lambda model: client,
+        evaluator=UnmeasuredEvaluator(),
+        worker_kernelbench_root="/worker/KernelBench",
+        artifact_root=tmp_path,
+        run_id="unmeasured-incumbent",
+    ).run()
+
+    third_feedback = client.messages[2][-1].content
+    assert "label = 'correct-unmeasured'" in third_feedback
+    assert "best_correct_speedup_so_far" not in third_feedback
 
 
 def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from abstrak.canary.targets import load_target_card
 from abstrak.evaluation.agent_contracts import (
     AgentAttemptRecord,
     AgentModelSpec,
@@ -48,6 +49,25 @@ backend. Do not return prose, patches, shell commands, placeholders, or partial 
 """.strip()
 
 _PYTHON_BLOCK = re.compile(r"```python[ \t]*\r?\n(?P<code>.*?)```", re.DOTALL | re.IGNORECASE)
+
+_TARGET_STACK_IDS: dict[TargetName, str] = {
+    "triton": "triton-a100",
+    "tilelang": "tilelang-a100",
+    "cute": "cute-a100",
+}
+_TARGET_CARD_EXAMPLE_HEADING = "\n## Model scaffold"
+_DIAGNOSTIC_METADATA_KEYS = (
+    "compilation_error_name",
+    "compilation_error",
+    "runtime_error_name",
+    "runtime_error",
+    "correctness_issue",
+    "max_difference",
+    "avg_difference",
+    "correctness_trials",
+    "error_during_performance",
+)
+_MAX_DIAGNOSTIC_CHARS = 4000
 
 
 class AgentCollectionError(RuntimeError):
@@ -137,8 +157,16 @@ def build_initial_messages(
     target: TargetName,
     precision: Precision,
 ) -> list[AgentMessage]:
+    target_card = load_target_card(_TARGET_STACK_IDS[target])
+    target_contract, separator, _ = target_card.partition(_TARGET_CARD_EXAMPLE_HEADING)
+    if not separator:
+        raise AgentCollectionError(f"target card has no contract boundary: {target}")
     prompt = (
-        checkout.zero_shot_prompt(material, target, precision) + "\n" + RUNNABLE_OUTPUT_CONTRACT
+        checkout.zero_shot_prompt(material, target, precision)
+        + "\n\nTARGET CONTRACT (must follow)\n"
+        + target_contract.strip()
+        + "\n\n"
+        + RUNNABLE_OUTPUT_CONTRACT
     )
     return [AgentMessage(role=MessageRole.USER, content=prompt)]
 
@@ -274,7 +302,54 @@ def _response_payload(completion: AgentCompletion) -> dict[str, object]:
     }
 
 
-def _evaluation_feedback(result: EvaluationResult, best_speedup: float | None) -> str:
+def _truncate_diagnostic(value: str, limit: int = _MAX_DIAGNOSTIC_CHARS) -> str:
+    if len(value) <= limit:
+        return value
+    marker = "\n...[diagnostic truncated]...\n"
+    remaining = limit - len(marker)
+    head = remaining // 2
+    return f"{value[:head]}{marker}{value[-(remaining - head) :]}"
+
+
+def _diagnostic_feedback(result: EvaluationResult, worker_log: str) -> str | None:
+    metadata = {
+        key: result.metadata[key]
+        for key in _DIAGNOSTIC_METADATA_KEYS
+        if key in result.metadata and result.metadata[key] not in (None, "", [], {})
+    }
+    if metadata:
+        rendered = json.dumps(metadata, ensure_ascii=False, sort_keys=True, default=str)
+        return _truncate_diagnostic(rendered)
+    if not result.correctness and not result.static_errors:
+        stripped_log = worker_log.strip()
+        if stripped_log:
+            return _truncate_diagnostic(stripped_log)
+    return None
+
+
+def _incumbent_feedback(
+    incumbent_code: str | None,
+    latest_code: str | None,
+) -> list[str]:
+    if incumbent_code is None or incumbent_code == latest_code:
+        return []
+    return [
+        "The latest attempt did not improve the best correct candidate. Continue from this "
+        "incumbent implementation:",
+        "```python",
+        incumbent_code.rstrip(),
+        "```",
+    ]
+
+
+def _evaluation_feedback(
+    result: EvaluationResult,
+    best_speedup: float | None,
+    worker_log: str = "",
+    *,
+    incumbent_code: str | None = None,
+    latest_code: str | None = None,
+) -> str:
     lines = [
         "KernelBench evaluation result:",
         f"status: {result.status}",
@@ -289,21 +364,47 @@ def _evaluation_feedback(result: EvaluationResult, best_speedup: float | None) -
         lines.append("static_errors: " + " | ".join(result.static_errors))
     if result.error:
         lines.append("error: " + result.error[:2000])
+    diagnostics = _diagnostic_feedback(result, worker_log)
+    if diagnostics:
+        lines.append("diagnostics: " + diagnostics)
+    lines.extend(_incumbent_feedback(incumbent_code, latest_code))
     lines.append(
         "Return a revised complete directly runnable ModelNew as exactly one Python code block."
     )
     return "\n".join(lines)
 
 
-def _parse_feedback(error: str, best_speedup: float | None) -> str:
+def _parse_feedback(
+    error: str,
+    best_speedup: float | None,
+    *,
+    incumbent_code: str | None = None,
+) -> str:
     lines = [f"Candidate extraction failed: {error}"]
     if best_speedup is not None:
         lines.append(f"best_correct_speedup_so_far: {best_speedup:.6g}")
+    lines.extend(_incumbent_feedback(incumbent_code, None))
     lines.append(
         "Return the complete directly runnable ModelNew as exactly one Python code block and "
         "nothing else."
     )
     return "\n".join(lines)
+
+
+def _bounded_history(
+    initial_messages: Sequence[AgentMessage],
+    completion: AgentCompletion,
+    feedback: str,
+) -> list[AgentMessage]:
+    return [
+        *initial_messages,
+        AgentMessage(
+            role=MessageRole.ASSISTANT,
+            content=completion.text,
+            reasoning_content=completion.reasoning_content,
+        ),
+        AgentMessage(role=MessageRole.USER, content=feedback),
+    ]
 
 
 class AgentCollectionRunner:
@@ -437,9 +538,13 @@ class AgentCollectionRunner:
         attempts_path: Path,
     ) -> list[AgentAttemptRecord]:
         identifier = trajectory_id(model.id, task.ref, target)
-        messages = build_initial_messages(self.checkout, material, target, self.study.precision)
+        initial_messages = tuple(
+            build_initial_messages(self.checkout, material, target, self.study.precision)
+        )
+        messages = list(initial_messages)
         records: list[AgentAttemptRecord] = []
         best_speedup: float | None = None
+        incumbent_code: str | None = None
         for iteration in range(1, self.iterations + 1):
             response_path, candidate_path, log_path = self._paths(identifier, iteration)
             self._log(
@@ -484,13 +589,6 @@ class AgentCollectionRunner:
                 f"output_tokens={completion.output_tokens}"
             )
             _write_json(response_path, _response_payload(completion))
-            messages.append(
-                AgentMessage(
-                    role=MessageRole.ASSISTANT,
-                    content=completion.text,
-                    reasoning_content=completion.reasoning_content,
-                )
-            )
             extracted = extract_runnable_candidate(completion.text)
             if extracted.code is None:
                 self._log(
@@ -512,11 +610,14 @@ class AgentCollectionRunner:
                         error=extracted.error,
                     )
                 )
-                messages.append(
-                    AgentMessage(
-                        role=MessageRole.USER,
-                        content=_parse_feedback(extracted.error or "unknown error", best_speedup),
-                    )
+                messages = _bounded_history(
+                    initial_messages,
+                    completion,
+                    _parse_feedback(
+                        extracted.error or "unknown error",
+                        best_speedup,
+                        incumbent_code=incumbent_code,
+                    ),
                 )
                 continue
 
@@ -568,8 +669,15 @@ class AgentCollectionRunner:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             log_path.write_text(outcome.log, encoding="utf-8")
             result = outcome.result
-            if result.correctness and result.performance_ratio is not None:
-                best_speedup = max(best_speedup or 0.0, result.performance_ratio)
+            _write_json(log_path.with_suffix(".result.json"), result)
+            if result.correctness:
+                if incumbent_code is None:
+                    incumbent_code = extracted.code
+                if result.performance_ratio is not None and (
+                    best_speedup is None or result.performance_ratio > best_speedup
+                ):
+                    best_speedup = result.performance_ratio
+                    incumbent_code = extracted.code
             self._log(
                 f"{identifier} iteration={iteration} evaluation completed "
                 f"status={result.status} compiled={result.compiled} "
@@ -596,11 +704,16 @@ class AgentCollectionRunner:
                     error=result.error,
                 )
             )
-            messages.append(
-                AgentMessage(
-                    role=MessageRole.USER,
-                    content=_evaluation_feedback(result, best_speedup),
-                )
+            messages = _bounded_history(
+                initial_messages,
+                completion,
+                _evaluation_feedback(
+                    result,
+                    best_speedup,
+                    outcome.log,
+                    incumbent_code=incumbent_code,
+                    latest_code=extracted.code,
+                ),
             )
         return records
 

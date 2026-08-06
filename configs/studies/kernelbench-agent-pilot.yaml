@@ -11,7 +11,7 @@ models:
     api_model: deepseek/deepseek-v4-flash
     api_key_env: ABSTRAK_DEEPSEEK_API_KEY
     base_url_env: ABSTRAK_DEEPSEEK_BASE_URL
-    timeout_seconds: 600
+    timeout_seconds: 1200
   - id: gpt-5.6-luna
     protocol: responses
     litellm_provider: openai
@@ -28,14 +28,14 @@ tasks:
     problem_id: 1
     stratum: dense-compute
   - level: 1
-    problem_id: 3
-    stratum: batched-compute
-  - level: 1
-    problem_id: 40
-    stratum: normalization
+    problem_id: 24
+    stratum: reduction
+  - level: 2
+    problem_id: 1
+    stratum: conv-fusion
   - level: 2
     problem_id: 76
-    stratum: fusion
+    stratum: gemm-fusion
 precision: fp16
 iterations: 4
 generation:
