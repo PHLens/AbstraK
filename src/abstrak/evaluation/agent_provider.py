@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -46,7 +46,12 @@ class AgentCompletion(BaseModel):
 
 
 class AgentCompletionClient(Protocol):
-    def complete(self, messages: Sequence[AgentMessage]) -> AgentCompletion: ...
+    def complete(
+        self,
+        messages: Sequence[AgentMessage],
+        *,
+        progress: Callable[[str], None] | None = None,
+    ) -> AgentCompletion: ...
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -83,7 +88,8 @@ def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
         raise ValueError("chat response has no message")
     content = message.get("content")
     if not isinstance(content, str) or not content:
-        raise ValueError("chat response has no text")
+        finish_reason = choices[0].get("finish_reason")
+        raise ValueError(f"chat response has no text (finish_reason={finish_reason})")
     reasoning_content = message.get("reasoning_content")
     if not isinstance(reasoning_content, str) or not reasoning_content:
         provider_fields = message.get("provider_specific_fields")
@@ -95,6 +101,118 @@ def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
     if not isinstance(reasoning_content, str) or not reasoning_content:
         reasoning_content = None
     return content, reasoning_content
+
+
+def _stream_text(delta: Mapping[str, Any], name: str) -> str:
+    value = delta.get(name)
+    if isinstance(value, str):
+        return value
+    provider_fields = delta.get("provider_specific_fields")
+    if isinstance(provider_fields, Mapping):
+        value = provider_fields.get(name)
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _aggregate_chat_stream(
+    response: Any,
+    *,
+    progress: Callable[[str], None] | None,
+) -> dict[str, Any]:
+    # Test transports may return a completed response even when the request asks for a stream.
+    if isinstance(response, (BaseModel, Mapping)) or hasattr(response, "model_dump"):
+        return _mapping(response)
+    try:
+        chunks = iter(response)
+    except TypeError as error:
+        raise ValueError("chat streaming response is not iterable") from error
+
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    usage: dict[str, Any] = {}
+    response_id: str | None = None
+    returned_model: str | None = None
+    created: Any = None
+    system_fingerprint: Any = None
+    finish_reason: str | None = None
+    chunk_count = 0
+    last_progress_at: float | None = None
+
+    def report(*, final: bool = False) -> None:
+        nonlocal last_progress_at
+        if progress is None:
+            return
+        now = time.monotonic()
+        if not final and last_progress_at is not None and now - last_progress_at < 10.0:
+            return
+        state = "completed" if final else "progress"
+        progress(
+            f"stream {state} chunks={chunk_count} "
+            f"reasoning_chars={sum(map(len, reasoning_parts))} "
+            f"content_chars={sum(map(len, content_parts))}"
+        )
+        last_progress_at = now
+
+    for chunk in chunks:
+        chunk_count += 1
+        payload = _mapping(chunk)
+        if response_id is None and payload.get("id") is not None:
+            response_id = str(payload["id"])
+        if returned_model is None and payload.get("model") is not None:
+            returned_model = str(payload["model"])
+        if created is None:
+            created = payload.get("created")
+        if system_fingerprint is None:
+            system_fingerprint = payload.get("system_fingerprint")
+        chunk_usage = payload.get("usage")
+        if isinstance(chunk_usage, Mapping):
+            usage = dict(chunk_usage)
+
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+            continue
+        choice = choices[0]
+        if isinstance(choice.get("finish_reason"), str):
+            finish_reason = choice["finish_reason"]
+        delta = choice.get("delta")
+        if not isinstance(delta, Mapping):
+            continue
+        reasoning_delta = _stream_text(delta, "reasoning_content")
+        content_delta = _stream_text(delta, "content")
+        if reasoning_delta:
+            reasoning_parts.append(reasoning_delta)
+        if content_delta:
+            content_parts.append(content_delta)
+        if reasoning_delta or content_delta:
+            report()
+
+    if chunk_count == 0:
+        raise ValueError("chat stream returned no chunks")
+    report(final=True)
+    message: dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content_parts),
+    }
+    reasoning_content = "".join(reasoning_parts)
+    if reasoning_content:
+        message["reasoning_content"] = reasoning_content
+    return {
+        "id": response_id,
+        "created": created,
+        "model": returned_model,
+        "object": "chat.completion.stream.aggregate",
+        "system_fingerprint": system_fingerprint,
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": finish_reason,
+                "message": message,
+            }
+        ],
+        "usage": usage,
+        "stream": {"chunk_count": chunk_count},
+    }
 
 
 def _responses_text(payload: Mapping[str, Any]) -> str:
@@ -158,23 +276,36 @@ class PilotProviderClient:
 
     def _request(self, messages: Sequence[AgentMessage]) -> tuple[dict[str, Any], dict[str, Any]]:
         rendered = [message.model_dump(mode="json", exclude_none=True) for message in messages]
+        stream_chat = self.model.protocol == "chat_completions"
         common: dict[str, Any] = {
             "model": self.model.api_model,
-            "stream": False,
+            "stream": stream_chat,
             "timeout": self.model.timeout_seconds,
             "num_retries": 0,
             "max_retries": 0,
             "custom_llm_provider": self.model.litellm_provider,
         }
         if self.model.protocol == "chat_completions":
-            common.update(
-                {
-                    "messages": rendered,
-                    "n": 1,
-                    "max_completion_tokens": self.generation.max_output_tokens,
-                    "reasoning_effort": self.generation.reasoning_effort,
-                }
-            )
+            common.update({"messages": rendered, "n": 1, "stream_options": {"include_usage": True}})
+            if self.model.litellm_provider == "deepseek":
+                # LiteLLM 1.92 collapses top-level effort to binary thinking mode, so retain
+                # DeepSeek's native effort through extra_body.
+                common.update(
+                    {
+                        "max_tokens": self.generation.max_output_tokens,
+                        "extra_body": {
+                            "thinking": {"type": "enabled"},
+                            "reasoning_effort": "max",
+                        },
+                    }
+                )
+            else:
+                common.update(
+                    {
+                        "max_completion_tokens": self.generation.max_output_tokens,
+                        "reasoning_effort": self.generation.reasoning_effort,
+                    }
+                )
         else:
             common.update(
                 {
@@ -194,16 +325,22 @@ class PilotProviderClient:
         }
         return actual, sanitized
 
-    def complete(self, messages: Sequence[AgentMessage]) -> AgentCompletion:
+    def complete(
+        self,
+        messages: Sequence[AgentMessage],
+        *,
+        progress: Callable[[str], None] | None = None,
+    ) -> AgentCompletion:
         actual, sanitized = self._request(messages)
         started = time.perf_counter()
         try:
             if self.model.protocol == "chat_completions":
                 response = self.transport.chat_completion(**actual)
+                payload = _aggregate_chat_stream(response, progress=progress)
             else:
                 response = self.transport.responses(**actual)
+                payload = _mapping(response)
             elapsed_ms = (time.perf_counter() - started) * 1000
-            payload = _mapping(response)
             if self.model.protocol == "chat_completions":
                 text, reasoning_content = _chat_output(payload)
             else:

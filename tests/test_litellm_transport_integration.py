@@ -75,9 +75,69 @@ class OpenAIStubHandler(BaseHTTPRequestHandler):
                     "code": "server_error",
                 }
             }
-        body = json.dumps(payload).encode()
+        content_type = "application/json"
+        if type(self).response_status == 200 and type(self).request_body.get("stream") is True:
+            base = {
+                "id": "stub-response-1",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": "test-model-snapshot",
+            }
+            deltas = []
+            if type(self).response_reasoning_content is not None:
+                deltas.append(
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": None,
+                                "delta": {
+                                    "role": "assistant",
+                                    "reasoning_content": type(self).response_reasoning_content,
+                                },
+                            }
+                        ],
+                    }
+                )
+            deltas.extend(
+                [
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": None,
+                                "delta": {"content": message["content"]},
+                            }
+                        ],
+                    },
+                    {
+                        **base,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "finish_reason": "stop",
+                                "delta": {},
+                            }
+                        ],
+                    },
+                    {
+                        **base,
+                        "choices": [],
+                        "usage": payload["usage"],
+                    },
+                ]
+            )
+            body = (
+                b"".join(f"data: {json.dumps(chunk)}\n\n".encode() for chunk in deltas)
+                + b"data: [DONE]\n\n"
+            )
+            content_type = "text/event-stream"
+        else:
+            body = json.dumps(payload).encode()
         self.send_response(type(self).response_status)
-        self.send_header("content-type", "application/json")
+        self.send_header("content-type", content_type)
         self.send_header("content-length", str(len(body)))
         self.send_header("x-request-id", "stub-http-request-1")
         self.end_headers()
@@ -207,6 +267,12 @@ def test_real_litellm_transport_preserves_deepseek_reasoning_history() -> None:
         )
 
     assert handler.request_count == 2
+    assert handler.request_body["stream"] is True
+    assert handler.request_body["stream_options"] == {"include_usage": True}
+    assert handler.request_body["max_tokens"] == 16384
+    assert "max_completion_tokens" not in handler.request_body
+    assert handler.request_body["thinking"] == {"type": "enabled"}
+    assert handler.request_body["reasoning_effort"] == "max"
     assert handler.request_body["messages"][1] == {
         "role": "assistant",
         "content": '{"action":"finish","nonce":"integration"}',

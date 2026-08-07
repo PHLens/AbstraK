@@ -551,9 +551,17 @@ class AgentCollectionRunner:
                 f"{identifier} iteration={iteration}/{self.iterations} provider request started "
                 f"timeout={model.timeout_seconds:g}s"
             )
+
+            def report_stream(
+                detail: str,
+                current_identifier: str = identifier,
+                current_iteration: int = iteration,
+            ) -> None:
+                self._log(f"{current_identifier} iteration={current_iteration} provider {detail}")
+
             try:
                 with self._heartbeat(f"{identifier} iteration={iteration} provider request"):
-                    completion = client.complete(messages)
+                    completion = client.complete(messages, progress=report_stream)
             except AgentProviderError as error:
                 self._log(f"{identifier} iteration={iteration} provider failed: {error}")
                 _write_json(

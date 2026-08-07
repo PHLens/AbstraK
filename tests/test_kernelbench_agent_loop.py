@@ -135,8 +135,15 @@ class FakeClient:
         self.completions = completions
         self.messages: list[tuple[AgentMessage, ...]] = []
 
-    def complete(self, messages: list[AgentMessage]) -> AgentCompletion:
+    def complete(
+        self,
+        messages: list[AgentMessage],
+        *,
+        progress: Any = None,
+    ) -> AgentCompletion:
         self.messages.append(tuple(messages))
+        if progress is not None:
+            progress("stream progress chunks=1 reasoning_chars=10 content_chars=0")
         item = self.completions.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -302,6 +309,7 @@ def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path)
     assert (outcome.run_directory / "raw" / "candidates").is_dir()
     assert (outcome.run_directory / "raw" / "responses").is_dir()
     assert any("iteration=1/3 provider request started" in line for line in progress)
+    assert any("provider stream progress" in line for line in progress)
     assert any("iteration=1 SSH evaluation started" in line for line in progress)
     assert any("run=run-1 completed attempts=3" in line for line in progress)
 
@@ -387,9 +395,7 @@ def test_runner_passes_worker_diagnostic_and_retains_best_candidate(tmp_path: Pa
     assert "label = 'best'" in third_request[2].content
     assert "reasoning one" not in "\n".join(message.content for message in third_request)
     result_path = next(
-        (tmp_path / "bounded-incumbent" / "raw" / "worker-logs").rglob(
-            "iteration-001.result.json"
-        )
+        (tmp_path / "bounded-incumbent" / "raw" / "worker-logs").rglob("iteration-001.result.json")
     )
     persisted_result = json.loads(result_path.read_text(encoding="utf-8"))
     assert persisted_result["metadata"] == {"artifact_only": "persisted diagnostic"}
@@ -542,16 +548,16 @@ def test_ssh_evaluator_serializes_one_job(monkeypatch: pytest.MonkeyPatch) -> No
 class FakeTransport:
     call_count = 0
 
-    def __init__(self, payload: dict[str, Any]) -> None:
+    def __init__(self, payload: Any) -> None:
         self.payload = payload
         self.calls: list[dict[str, Any]] = []
 
-    def chat_completion(self, **kwargs: Any) -> dict[str, Any]:
+    def chat_completion(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         self.call_count += 1
         return self.payload
 
-    def responses(self, **kwargs: Any) -> dict[str, Any]:
+    def responses(self, **kwargs: Any) -> Any:
         self.calls.append(kwargs)
         self.call_count += 1
         return self.payload
@@ -611,6 +617,7 @@ def test_pilot_provider_uses_requested_protocol_and_xhigh(
     assert completion.text.startswith("```python")
     token_key = "max_output_tokens" if protocol == "responses" else "max_completion_tokens"
     assert request[token_key] == 16384
+    assert request["stream"] is (protocol == "chat_completions")
     if protocol == "responses":
         assert request["reasoning"] == {"effort": "xhigh"}
         assert completion.reasoning_content is None
@@ -621,6 +628,96 @@ def test_pilot_provider_uses_requested_protocol_and_xhigh(
     assert request["api_key"] == "secret"
     assert completion.sanitized_request["api_key_env"] == "TEST_API_KEY"
     assert "secret" not in json.dumps(completion.sanitized_request)
+
+
+def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream() -> None:
+    chunks = [
+        {
+            "id": "chat-stream-1",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": None,
+                    "delta": {"role": "assistant", "reasoning_content": "reason "},
+                }
+            ],
+        },
+        {
+            "id": "chat-stream-1",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": None,
+                    "delta": {"reasoning_content": "trace"},
+                }
+            ],
+        },
+        {
+            "id": "chat-stream-1",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "delta": {"content": _candidate("streamed")},
+                }
+            ],
+        },
+        {
+            "id": "chat-stream-1",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 3,
+                "completion_tokens": 11,
+                "completion_tokens_details": {"reasoning_tokens": 5},
+            },
+        },
+    ]
+    transport = FakeTransport(iter(chunks))
+    deepseek = _model("deepseek-v4-flash").model_copy(
+        update={
+            "litellm_provider": "deepseek",
+            "api_model": "deepseek/deepseek-v4-flash",
+        }
+    )
+    progress: list[str] = []
+    client = PilotProviderClient(
+        deepseek,
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+
+    completion = client.complete(
+        [AgentMessage(role=MessageRole.USER, content="prompt")],
+        progress=progress.append,
+    )
+
+    request = transport.calls[0]
+    assert request["stream"] is True
+    assert request["stream_options"] == {"include_usage": True}
+    assert request["max_tokens"] == 16384
+    assert "max_completion_tokens" not in request
+    assert "reasoning_effort" not in request
+    assert request["extra_body"] == {
+        "thinking": {"type": "enabled"},
+        "reasoning_effort": "max",
+    }
+    assert completion.text == _candidate("streamed")
+    assert completion.reasoning_content == "reason trace"
+    assert completion.output_tokens == 11
+    assert completion.reasoning_tokens == 5
+    assert completion.raw_response["stream"] == {"chunk_count": 4}
+    assert progress[0].startswith("stream progress")
+    assert progress[-1].startswith("stream completed")
+    assert "reason trace" not in "\n".join(progress)
 
 
 def test_pilot_provider_keeps_an_explicit_falsy_transport() -> None:

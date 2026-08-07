@@ -8,7 +8,8 @@ The default study is [`configs/studies/kernelbench-agent-pilot.yaml`](../configs
 It contains 2 models x 4 KernelBench tasks x 3 targets and defaults to 4 turns per trajectory:
 
 - models: `deepseek-v4-flash` through Chat Completions and `gpt-5.6-luna` through Responses;
-  both use `xhigh` reasoning; the DeepSeek request timeout is 1200 seconds;
+  both use `xhigh` reasoning; DeepSeek maps that to native `reasoning_effort=max`, enforces the
+  configured output cap with `max_tokens`, streams reasoning/output, and has a 1200-second timeout;
 - targets: `triton`, `tilelang`, and `cute`;
 - tasks: Level 1 problem 1 Square Matmul and problem 24 LogSoftmax, plus Level 2 problem 1
   Conv2D+ReLU+BiasAdd and problem 76 GEMM+Add+ReLU;
@@ -48,7 +49,11 @@ Collect model turns. Each parseable response is evaluated immediately by the SSH
 request contains the initial task and concise target contract, the latest assistant response and
 its evaluator feedback, plus the best correct implementation when the latest attempt regresses.
 Older turns are discarded. For thinking-mode Chat Completions models, the latest assistant's
-returned `reasoning_content` is preserved:
+returned `reasoning_content` is preserved.
+
+DeepSeek Chat Completions are consumed as a stream. `--live` reports cumulative reasoning and
+answer character counts without printing the reasoning text; the completed response is aggregated
+into the same response artifact used by later turns.
 
 ```bash
 uv run abstrak-kernelbench agent-collect \
