@@ -39,7 +39,7 @@ tasks:
 precision: fp16
 iterations: 4
 generation:
-  max_output_tokens: 16384
+  max_output_tokens: 65536
   reasoning_effort: xhigh
   temperature: null
   top_p: null

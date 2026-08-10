@@ -216,6 +216,7 @@ def test_pilot_study_is_the_small_24_trajectory_matrix() -> None:
         "level2-problem76",
     ]
     assert study.generation.reasoning_effort == "xhigh"
+    assert study.generation.max_output_tokens == 65536
     assert [model.timeout_seconds for model in study.models] == [1200.0, 600.0]
 
 
@@ -229,6 +230,7 @@ def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
     assert study.targets == ("triton",)
     assert [task.ref for task in study.tasks] == ["level1-problem1"]
     assert study.generation.reasoning_effort == "xhigh"
+    assert study.generation.max_output_tokens == 32768
     assert study.models[0].timeout_seconds == 1200.0
 
 
@@ -247,6 +249,7 @@ def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
     assert study.iterations == 4
     assert study.trajectory_count == 12
     assert study.request_count == 48
+    assert study.generation.max_output_tokens == 65536
     assert study.models[0].timeout_seconds == 1200.0
 
 

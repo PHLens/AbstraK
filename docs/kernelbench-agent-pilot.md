@@ -55,6 +55,9 @@ DeepSeek Chat Completions are consumed as a stream. `--live` reports cumulative 
 answer character counts without printing the reasoning text; the completed response is aggregated
 into the same response artifact used by later turns.
 
+The smoke study allows 32768 total output tokens, while the full studies allow 65536 because
+DeepSeek counts both `reasoning_content` and the final answer against `max_tokens`.
+
 ```bash
 uv run abstrak-kernelbench agent-collect \
   --study configs/studies/kernelbench-agent-pilot.yaml \
