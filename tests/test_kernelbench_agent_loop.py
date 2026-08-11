@@ -268,6 +268,93 @@ def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
     assert study.models[0].timeout_seconds == 1200.0
 
 
+AFFINITY_HEADLINE_TASKS = (
+    ("level1-problem36", "triton-affinity"),
+    ("level1-problem47", "triton-affinity"),
+    ("level1-problem41", "triton-affinity"),
+    ("level1-problem3", "tilelang-affinity"),
+    ("level2-problem76", "tilelang-affinity"),
+    ("level2-problem99", "tilelang-affinity"),
+    ("level1-problem8", "cute-affinity"),
+    ("level1-problem16", "cute-affinity"),
+    ("level1-problem17", "cute-affinity"),
+    ("level1-problem1", "control"),
+    ("level1-problem5", "control"),
+    ("level1-problem7", "control"),
+)
+
+
+@pytest.mark.parametrize(
+    ("filename", "model_ids", "tasks", "iterations", "trajectories", "requests"),
+    [
+        (
+            "kernelbench-agent-affinity-qualification.yaml",
+            ("deepseek-v4-flash",),
+            (
+                ("level1-problem36", "triton-affinity"),
+                ("level1-problem3", "tilelang-affinity"),
+                ("level1-problem17", "cute-affinity"),
+                ("level1-problem1", "control"),
+            ),
+            2,
+            12,
+            24,
+        ),
+        (
+            "kernelbench-agent-affinity-deepseek.yaml",
+            ("deepseek-v4-flash",),
+            AFFINITY_HEADLINE_TASKS,
+            4,
+            36,
+            144,
+        ),
+        (
+            "kernelbench-agent-affinity-full.yaml",
+            ("deepseek-v4-flash", "gpt-5.6-luna"),
+            AFFINITY_HEADLINE_TASKS,
+            4,
+            72,
+            288,
+        ),
+        (
+            "kernelbench-agent-affinity-stress.yaml",
+            ("deepseek-v4-flash",),
+            (
+                ("level1-problem82", "convolution-stress"),
+                ("level2-problem1", "convolution-stress"),
+            ),
+            4,
+            6,
+            24,
+        ),
+    ],
+)
+def test_affinity_study_configs_pin_the_minimal_matrices(
+    filename: str,
+    model_ids: tuple[str, ...],
+    tasks: tuple[tuple[str, str], ...],
+    iterations: int,
+    trajectories: int,
+    requests: int,
+) -> None:
+    study = load_agent_study(REPOSITORY_ROOT / "configs" / "studies" / filename)
+
+    assert tuple(model.id for model in study.models) == model_ids
+    assert study.targets == ("triton", "tilelang", "cute")
+    assert tuple((task.ref, task.stratum) for task in study.tasks) == tasks
+    assert study.iterations == iterations
+    assert study.trajectory_count == trajectories
+    assert study.request_count == requests
+    assert study.generation.max_output_tokens == 65536
+    assert study.generation.reasoning_effort == "xhigh"
+    assert all(model.timeout_seconds == 1200.0 for model in study.models)
+    assert study.evaluator.timeout_seconds == 900
+    assert study.evaluator.num_correct_trials == 5
+    assert study.evaluator.num_perf_trials == 100
+    assert study.evaluator.timing_method == "cuda_event"
+    assert study.evaluator.static_check is True
+
+
 def test_runner_evaluates_each_generated_turn_and_feeds_feedback(tmp_path: Path) -> None:
     study = _study(iterations=3)
     client = FakeClient(
