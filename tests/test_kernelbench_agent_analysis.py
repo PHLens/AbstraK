@@ -12,7 +12,11 @@ import pytest
 
 from abstrak.evaluation.agent_analysis import AgentAnalysisError, analyze_agent_run
 from abstrak.evaluation.agent_contracts import AgentAttemptRecord
-from abstrak.evaluation.agent_figures import plot_agent_run
+from abstrak.evaluation.agent_figures import (
+    _portfolio_figure,
+    _winner_and_gain_figure,
+    plot_agent_run,
+)
 
 MODELS = ("deepseek-v4-flash", "gpt-5.6-luna")
 TARGETS = ("triton", "tilelang", "cute")
@@ -581,3 +585,102 @@ def test_plot_agent_run_writes_exact_two_png_pdf_bases_without_global_style_leak
         assert pixels.shape[0] > 500
         assert pixels.shape[1] > 1_000
         assert not math.isclose(float(pixels.std()), 0.0, abs_tol=1e-6)
+
+
+def test_plot_agent_run_adds_token_views_when_exact_usage_exists(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path)
+    reference_file = tmp_path / "plot-references.csv"
+    reference_file.write_text(
+        "task_ref,target,speedup,label\n"
+        "level1-problem1,triton,3.0,expert-v1\n"
+        "level1-problem1,tilelang,5.0,expert-v1\n"
+        "level1-problem1,cute,4.0,expert-v1\n",
+        encoding="utf-8",
+    )
+    analyze_agent_run(run_path, reference_file=reference_file)
+    original_font_size = matplotlib.rcParams["font.size"]
+
+    paths = plot_agent_run(run_path)
+
+    assert [path.name for path in paths] == [
+        "01_anytime_performance_profiles.png",
+        "01_anytime_performance_profiles.pdf",
+        "01b_token_performance_profiles.png",
+        "01b_token_performance_profiles.pdf",
+        "02_winner_map_and_oracle_gain.png",
+        "02_winner_map_and_oracle_gain.pdf",
+        "03_token_budget_portfolio.png",
+        "03_token_budget_portfolio.pdf",
+    ]
+    assert all(path.stat().st_size > 1_000 for path in paths)
+    assert all(path.read_bytes().startswith(b"%PDF") for path in paths[1::2])
+    assert matplotlib.rcParams["font.size"] == original_font_size
+    for path in (paths[2], paths[6]):
+        pixels = mpimg.imread(path)
+        assert pixels.shape[0] > 500
+        assert pixels.shape[1] > 1_000
+        assert not math.isclose(float(pixels.std()), 0.0, abs_tol=1e-6)
+
+
+def test_portfolio_keeps_exact_equal_split_after_full_budget_is_censored(
+    tmp_path: Path,
+) -> None:
+    run_path = _write_token_run(tmp_path)
+    attempts_path = run_path / "raw" / "attempts.jsonl"
+    attempts = [
+        AgentAttemptRecord.model_validate_json(line)
+        for line in attempts_path.read_text(encoding="utf-8").splitlines()
+    ]
+    attempts_path.write_text(
+        "".join(
+            attempt.model_dump_json() + "\n"
+            for attempt in attempts
+            if not (attempt.target == "tilelang" and attempt.iteration == 2)
+        ),
+        encoding="utf-8",
+    )
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    figure = _portfolio_figure(metrics)
+
+    utility_axis = figure.axes[0]
+    strategy_labels = {
+        "Best fixed (B to one target)",
+        "Free best-of (B per target)",
+        "Equal split (B total)",
+    }
+    endpoints = {
+        line.get_label(): max(line.get_xdata())
+        for line in utility_axis.lines
+        if line.get_label() in strategy_labels
+    }
+    assert endpoints["Best fixed (B to one target)"] == 3
+    assert endpoints["Free best-of (B per target)"] == 3
+    assert endpoints["Equal split (B total)"] == 10
+
+
+def test_winner_figure_renders_target_and_best_fixed_ties(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path)
+    metrics, _, _ = analyze_agent_run(run_path)
+    final_winner = metrics["winners"][-1]
+    final_winner.update(
+        {
+            "winner_status": "tie",
+            "winner_target": "triton",
+            "tied_targets": ["triton", "tilelang"],
+        }
+    )
+    final_aggregate = metrics["aggregates"][-1]
+    final_aggregate.update(
+        {
+            "best_fixed_target": "triton",
+            "tied_best_fixed_targets": ["triton", "tilelang"],
+        }
+    )
+
+    figure = _winner_and_gain_figure(metrics)
+
+    visible_text = [text.get_text() for axis in figure.axes for text in axis.texts]
+    titles = [axis.get_title() for axis in figure.axes]
+    assert "Tie" in visible_text
+    assert any("best fixed = Tie: Triton / TileLang" in title for title in titles)

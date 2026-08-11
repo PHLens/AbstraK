@@ -12,6 +12,7 @@ from matplotlib.colors import ListedColormap
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from matplotlib.ticker import PercentFormatter
 
 from abstrak.evaluation.agent_analysis import load_agent_metrics
 
@@ -19,6 +20,12 @@ _TARGET_COLORS = ("#0072B2", "#D55E00", "#009E73")
 _MARKERS = ("o", "s", "^")
 _LINE_STYLES = ("-", "--", ":")
 _MISSING_COLOR = "#D9D9D9"
+_TIE_COLOR = "#9E9E9E"
+_STRATEGY_STYLES = {
+    "best_fixed": ("#0072B2", "o", "-", "Best fixed (B to one target)"),
+    "oracle": ("#009E73", "^", "--", "Free best-of (B per target)"),
+    "equal_split": ("#D55E00", "s", ":", "Equal split (B total)"),
+}
 
 
 class AgentFigureError(ValueError):
@@ -72,12 +79,20 @@ def _task_title(task: Mapping[str, str]) -> str:
     return f"{task['ref']}\n{name.replace('_', ' ')}"
 
 
+def _reference_lookup(metrics: Mapping[str, Any]) -> dict[tuple[str, str], Mapping[str, Any]]:
+    return {
+        (row["task_ref"], row["target"]): row
+        for row in metrics.get("reference_rows", [])
+    }
+
+
 def _profile_figure(metrics: Mapping[str, Any]) -> Figure:
     models = metrics["models"]
     tasks = metrics["tasks"]
     targets = metrics["targets"]
     iterations = int(metrics["iterations"])
     styles = _target_styles(targets)
+    references = _reference_lookup(metrics)
     figure = Figure(
         figsize=(max(8.0, 2.75 * len(tasks)), max(4.4, 2.35 * len(models))),
         constrained_layout=True,
@@ -112,6 +127,17 @@ def _profile_figure(metrics: Mapping[str, Any]) -> Figure:
                     linestyle=line_style,
                     label=_display_target(target),
                 )
+                reference = references.get((task["ref"], target))
+                if reference is not None:
+                    axis.scatter(
+                        [iterations],
+                        [float(reference["reference_speedup"])],
+                        marker="D",
+                        facecolors="none",
+                        edgecolors=color,
+                        linewidths=1.1,
+                        zorder=5,
+                    )
                 if missing_iterations:
                     axis.scatter(
                         missing_iterations,
@@ -164,7 +190,217 @@ def _profile_figure(metrics: Mapping[str, Any]) -> Figure:
             ),
         ]
     )
+    if references:
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="#555555",
+                marker="D",
+                markerfacecolor="none",
+                linestyle="none",
+                label="Measured reference",
+            )
+        )
     figure.legend(handles=handles, loc="outside upper center", ncol=len(handles), frameon=False)
+    return figure
+
+
+def _token_profile_figure(metrics: Mapping[str, Any]) -> Figure:
+    models = metrics["models"]
+    tasks = metrics["tasks"]
+    targets = metrics["targets"]
+    styles = _target_styles(targets)
+    references = _reference_lookup(metrics)
+    token_rows = metrics["token_curve_rows"]
+    usage_rows = {
+        (row["model_id"], row["task_ref"], row["target"]): row
+        for row in metrics["trajectory_usage_rows"]
+    }
+    figure = Figure(
+        figsize=(max(8.0, 2.75 * len(tasks)), max(4.4, 2.35 * len(models))),
+        constrained_layout=True,
+    )
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(len(models), len(tasks), squeeze=False, sharex="row")
+
+    for model_index, model_id in enumerate(models):
+        model_budgets = sorted(
+            {
+                int(row["token_budget"])
+                for row in token_rows
+                if row["model_id"] == model_id
+            }
+        )
+        reference_x = model_budgets[-1] if model_budgets else 0
+        for task_index, task in enumerate(tasks):
+            axis = axes[model_index][task_index]
+            for target_index, target in enumerate(targets):
+                color, marker, line_style = styles[target]
+                rows = sorted(
+                    (
+                        row
+                        for row in token_rows
+                        if row["model_id"] == model_id
+                        and row["task_ref"] == task["ref"]
+                        and row["target"] == target
+                        and row["budget_status"] == "exact"
+                    ),
+                    key=lambda row: int(row["token_budget"]),
+                )
+                budgets = [int(row["token_budget"]) for row in rows]
+                values = [
+                    (
+                        float(row["best_speedup"])
+                        if row.get("best_speedup") is not None
+                        else math.nan
+                    )
+                    for row in rows
+                ]
+                axis.step(
+                    budgets,
+                    values,
+                    where="post",
+                    color=color,
+                    marker=marker,
+                    linestyle=line_style,
+                    label=_display_target(target),
+                )
+                missing_budgets = [
+                    int(row["token_budget"])
+                    for row in rows
+                    if row.get("best_speedup") is None
+                ]
+                if missing_budgets:
+                    axis.scatter(
+                        missing_budgets,
+                        [0.025 + 0.027 * target_index] * len(missing_budgets),
+                        transform=axis.get_xaxis_transform(),
+                        color=color,
+                        marker="x",
+                        linewidths=1.0,
+                        clip_on=False,
+                        zorder=4,
+                    )
+
+                usage = usage_rows[(model_id, task["ref"], target)]
+                if usage["censored"]:
+                    prefix = int(usage["exact_prefix_tokens"])
+                    prefix_row = next(
+                        (row for row in reversed(rows) if int(row["token_budget"]) <= prefix),
+                        None,
+                    )
+                    prefix_value = (
+                        prefix_row.get("best_speedup") if prefix_row is not None else None
+                    )
+                    if prefix_value is None:
+                        axis.scatter(
+                            [prefix],
+                            [0.11 + 0.027 * target_index],
+                            transform=axis.get_xaxis_transform(),
+                            color=color,
+                            marker="|",
+                            s=80,
+                            linewidths=1.5,
+                            clip_on=False,
+                            zorder=5,
+                        )
+                    else:
+                        axis.scatter(
+                            [prefix],
+                            [float(prefix_value)],
+                            color=color,
+                            marker="|",
+                            s=80,
+                            linewidths=1.5,
+                            zorder=5,
+                        )
+
+                reference = references.get((task["ref"], target))
+                if reference is not None:
+                    axis.scatter(
+                        [reference_x],
+                        [float(reference["reference_speedup"])],
+                        marker="D",
+                        facecolors="none",
+                        edgecolors=color,
+                        linewidths=1.1,
+                        zorder=6,
+                    )
+
+            axis.axhline(1.0, color="#777777", linewidth=0.8, linestyle="--", zorder=0)
+            axis.grid(axis="y")
+            axis.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
+            if model_budgets:
+                axis.set_xlim(
+                    (0, model_budgets[-1] * 1.05)
+                    if model_budgets[-1] > 0
+                    else (-0.5, 0.5)
+                )
+            if model_index == 0:
+                axis.set_title(_task_title(task))
+            if task_index == 0:
+                axis.set_ylabel(f"{model_id}\nBest correct speedup (x)")
+            if model_index == len(models) - 1:
+                axis.set_xlabel("Cumulative model tokens")
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=styles[target][0],
+            marker=styles[target][1],
+            linestyle=styles[target][2],
+            label=_display_target(target),
+        )
+        for target in targets
+    ]
+    handles.extend(
+        [
+            Line2D(
+                [0],
+                [0],
+                color="#777777",
+                marker="x",
+                linestyle="none",
+                label="No correct result",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color="#777777",
+                marker="|",
+                markersize=9,
+                linestyle="none",
+                label="Exact prefix ends",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color="#777777",
+                linestyle="--",
+                label="1.0x baseline",
+            ),
+        ]
+    )
+    if references:
+        handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="#555555",
+                marker="D",
+                markerfacecolor="none",
+                linestyle="none",
+                label="Measured reference",
+            )
+        )
+    figure.legend(
+        handles=handles,
+        loc="outside upper center",
+        ncol=min(4, len(handles)),
+        frameon=False,
+    )
     return figure
 
 
@@ -191,7 +427,9 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
         (row["model_id"], row["task_ref"], row["iteration"]): row
         for row in metrics["task_oracle_gains"]
     }
-    color_map = ListedColormap([_MISSING_COLOR, *(styles[target][0] for target in targets)])
+    color_map = ListedColormap(
+        [_MISSING_COLOR, *(styles[target][0] for target in targets), _TIE_COLOR]
+    )
 
     for model_index, model_id in enumerate(models):
         heatmap_axis = figure.add_subplot(grid[model_index, 0])
@@ -204,7 +442,12 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
             for iteration in range(1, iterations + 1):
                 row = winner_rows.get((model_id, task["ref"], iteration))
                 winner = row.get("winner_target") if row is not None else None
-                if winner is None:
+                tied = row.get("tied_targets", []) if row is not None else []
+                winner_status = row.get("winner_status") if row is not None else None
+                if winner_status == "tie" or len(tied) > 1:
+                    task_cells.append(len(targets) + 1)
+                    task_labels.append("Tie")
+                elif winner is None:
                     task_cells.append(0)
                     task_labels.append("NA")
                 else:
@@ -216,7 +459,7 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
             cells,
             cmap=color_map,
             vmin=-0.5,
-            vmax=len(targets) + 0.5,
+            vmax=len(targets) + 1.5,
             aspect="auto",
             interpolation="nearest",
         )
@@ -245,14 +488,18 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
             float(gain_rows[(model_id, task["ref"], final_iteration)]["oracle_gain_percent"])
             for task in tasks
         ]
-        final_winners = [
-            winner_rows[(model_id, task["ref"], final_iteration)]["winner_target"]
-            for task in tasks
+        final_winner_rows = [
+            winner_rows[(model_id, task["ref"], final_iteration)] for task in tasks
         ]
-        bar_colors = [
-            styles[winner][0] if winner is not None else _MISSING_COLOR
-            for winner in final_winners
-        ]
+        bar_colors = []
+        for row in final_winner_rows:
+            tied = row.get("tied_targets", [])
+            if row.get("winner_status") == "tie" or len(tied) > 1:
+                bar_colors.append(_TIE_COLOR)
+            elif row["winner_target"] is None:
+                bar_colors.append(_MISSING_COLOR)
+            else:
+                bar_colors.append(styles[row["winner_target"]][0])
         positions = list(range(len(tasks)))
         gain_axis.barh(positions, final_gains, color=bar_colors, height=0.62)
         gain_axis.axvline(0.0, color="#777777", linewidth=0.8)
@@ -263,6 +510,7 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
         gain_axis.invert_yaxis()
         gain_axis.set_xlabel("Oracle gain over best fixed (%)")
         gain_axis.grid(axis="x")
+        gain_axis.margins(x=0.12)
         for position, value in zip(positions, final_gains, strict=True):
             gain_axis.text(
                 value,
@@ -272,15 +520,28 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
                 va="center",
                 fontsize=7,
             )
+        tied_fixed = final_aggregate.get("tied_best_fixed_targets", [])
+        fixed_label = (
+            "Tie: " + " / ".join(_display_target(target) for target in tied_fixed)
+            if len(tied_fixed) > 1
+            else _display_target(final_aggregate["best_fixed_target"])
+        )
+        fixed_coverage = final_aggregate.get("best_fixed_correctness_coverage")
+        oracle_coverage = final_aggregate.get("oracle_correctness_coverage")
+        coverage_label = (
+            f"; correct {fixed_coverage:.0%} -> {oracle_coverage:.0%}"
+            if fixed_coverage is not None and oracle_coverage is not None
+            else ""
+        )
         gain_axis.set_title(
-            f"Iteration {final_iteration}: best fixed = "
-            f"{_display_target(final_aggregate['best_fixed_target'])}; "
-            f"overall +{final_aggregate['oracle_gain_percent']:.1f}%"
+            f"Iteration {final_iteration}: best fixed = {fixed_label}\n"
+            f"Oracle gain +{final_aggregate['oracle_gain_percent']:.1f}%{coverage_label}"
         )
 
     legend_handles = [
         Patch(facecolor=styles[target][0], label=_display_target(target)) for target in targets
     ]
+    legend_handles.append(Patch(facecolor=_TIE_COLOR, label="Tie"))
     legend_handles.append(Patch(facecolor=_MISSING_COLOR, label="No correct result"))
     figure.legend(
         handles=legend_handles,
@@ -288,6 +549,135 @@ def _winner_and_gain_figure(metrics: Mapping[str, Any]) -> Figure:
         ncol=len(legend_handles),
         frameon=False,
     )
+    return figure
+
+
+def _portfolio_figure(metrics: Mapping[str, Any]) -> Figure:
+    models = metrics["models"]
+    aggregate_rows = metrics["token_aggregates"]
+    figure = Figure(
+        figsize=(10.5, max(4.5, 2.8 * len(models))),
+        constrained_layout=True,
+    )
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(len(models), 2, squeeze=False, sharex="row")
+    series = (
+        (
+            "best_fixed",
+            "budget_status",
+            "best_fixed_geomean_utility",
+            "best_fixed_correctness_coverage",
+        ),
+        (
+            "oracle",
+            "budget_status",
+            "oracle_geomean_utility",
+            "oracle_correctness_coverage",
+        ),
+        (
+            "equal_split",
+            "equal_split_budget_status",
+            "equal_split_geomean_utility",
+            "equal_split_correctness_coverage",
+        ),
+    )
+
+    for model_index, model_id in enumerate(models):
+        utility_axis = axes[model_index][0]
+        coverage_axis = axes[model_index][1]
+        rows = sorted(
+            (row for row in aggregate_rows if row["model_id"] == model_id),
+            key=lambda row: int(row["token_budget"]),
+        )
+        for strategy, status_key, utility_key, coverage_key in series:
+            color, marker, line_style, label = _STRATEGY_STYLES[strategy]
+            exact_rows = [
+                row
+                for row in rows
+                if row.get(status_key) == "exact" and row.get(utility_key) is not None
+            ]
+            budgets = [int(row["token_budget"]) for row in exact_rows]
+            utilities = [float(row[utility_key]) for row in exact_rows]
+            coverages = [float(row[coverage_key]) for row in exact_rows]
+            utility_axis.step(
+                budgets,
+                utilities,
+                where="post",
+                color=color,
+                marker=marker,
+                linestyle=line_style,
+                label=label,
+            )
+            coverage_axis.step(
+                budgets,
+                coverages,
+                where="post",
+                color=color,
+                marker=marker,
+                linestyle=line_style,
+                label=label,
+            )
+            if exact_rows and any(
+                row.get(status_key) != "exact"
+                and int(row["token_budget"]) > budgets[-1]
+                for row in rows
+            ):
+                utility_axis.scatter(
+                    [budgets[-1]],
+                    [utilities[-1]],
+                    color=color,
+                    marker="|",
+                    s=90,
+                    linewidths=1.6,
+                    zorder=5,
+                )
+                coverage_axis.scatter(
+                    [budgets[-1]],
+                    [coverages[-1]],
+                    color=color,
+                    marker="|",
+                    s=90,
+                    linewidths=1.6,
+                    zorder=5,
+                )
+
+        utility_axis.axhline(1.0, color="#777777", linewidth=0.8, linestyle="--", zorder=0)
+        utility_axis.set_ylim(bottom=0.95)
+        utility_axis.set_ylabel(f"{model_id}\nDeployment utility (geomean x)")
+        utility_axis.set_title("Performance with 1.0x fallback")
+        utility_axis.grid(axis="y")
+        coverage_axis.set_ylim(0.0, 1.02)
+        coverage_axis.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+        coverage_axis.set_ylabel("Correct workload coverage")
+        coverage_axis.set_title("Correctness coverage")
+        coverage_axis.grid(axis="y")
+        for axis in (utility_axis, coverage_axis):
+            axis.set_xlabel("Token budget B per workload")
+            axis.ticklabel_format(axis="x", style="sci", scilimits=(-3, 4))
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=style[0],
+            marker=style[1],
+            linestyle=style[2],
+            label=style[3],
+        )
+        for style in _STRATEGY_STYLES.values()
+    ]
+    handles.append(
+        Line2D(
+            [0],
+            [0],
+            color="#777777",
+            marker="|",
+            markersize=9,
+            linestyle="none",
+            label="Exact range ends",
+        )
+    )
+    figure.legend(handles=handles, loc="outside upper center", ncol=len(handles), frameon=False)
     return figure
 
 
@@ -304,8 +694,8 @@ def _save_figure(figure: Figure, base_path: Path) -> tuple[Path, Path]:
     return png_path, pdf_path
 
 
-def plot_agent_run(run_directory: str | Path) -> tuple[Path, Path, Path, Path]:
-    """Render exactly the two planned figure bases from derived metrics."""
+def plot_agent_run(run_directory: str | Path) -> tuple[Path, ...]:
+    """Render iteration views and token views when exact token metrics exist."""
 
     import matplotlib
 
@@ -314,10 +704,30 @@ def plot_agent_run(run_directory: str | Path) -> tuple[Path, Path, Path, Path]:
     figure_path = run_path / "figures"
     figure_path.mkdir(parents=True, exist_ok=True)
     with matplotlib.rc_context(_style()):
+        paths: list[Path] = []
         profile_paths = _save_figure(
             _profile_figure(metrics), figure_path / "01_anytime_performance_profiles"
         )
+        paths.extend(profile_paths)
+        has_token_metrics = bool(metrics.get("token_curve_rows")) and bool(
+            metrics.get("token_aggregates")
+        )
+        if has_token_metrics:
+            paths.extend(
+                _save_figure(
+                    _token_profile_figure(metrics),
+                    figure_path / "01b_token_performance_profiles",
+                )
+            )
         winner_paths = _save_figure(
             _winner_and_gain_figure(metrics), figure_path / "02_winner_map_and_oracle_gain"
         )
-    return (*profile_paths, *winner_paths)
+        paths.extend(winner_paths)
+        if has_token_metrics:
+            paths.extend(
+                _save_figure(
+                    _portfolio_figure(metrics),
+                    figure_path / "03_token_budget_portfolio",
+                )
+            )
+    return tuple(paths)

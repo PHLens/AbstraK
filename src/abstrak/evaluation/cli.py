@@ -219,7 +219,7 @@ def _parser() -> argparse.ArgumentParser:
     )
 
     agent_plot = subparsers.add_parser(
-        "agent-plot", help="render the two pilot figures from derived metrics"
+        "agent-plot", help="render pilot figures from derived metrics"
     )
     agent_plot.add_argument("--run", required=True, help="analyzed agent run directory")
 
