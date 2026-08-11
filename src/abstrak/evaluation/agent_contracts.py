@@ -32,11 +32,12 @@ class AgentModelSpec(StudyModel):
     api_key_env: str = Field(pattern=r"^[A-Z_][A-Z0-9_]*$")
     base_url_env: str | None = Field(default=None, pattern=r"^[A-Z_][A-Z0-9_]*$")
     timeout_seconds: float = Field(default=600.0, gt=0, le=3600)
+    reasoning_effort: Literal["high", "xhigh"] | None = None
 
 
 class AgentGenerationConfig(StudyModel):
     max_output_tokens: int = Field(default=16384, ge=256, le=65536)
-    reasoning_effort: Literal["xhigh"] = "xhigh"
+    reasoning_effort: Literal["high", "xhigh"] = "xhigh"
     temperature: None = None
     top_p: None = None
 

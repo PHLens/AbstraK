@@ -430,6 +430,7 @@ class PilotProviderClient:
     def _request(self, messages: Sequence[AgentMessage]) -> tuple[dict[str, Any], dict[str, Any]]:
         rendered = [message.model_dump(mode="json", exclude_none=True) for message in messages]
         stream_chat = self.model.protocol == "chat_completions"
+        reasoning_effort = self.model.reasoning_effort or self.generation.reasoning_effort
         common: dict[str, Any] = {
             "model": self.model.api_model,
             "stream": stream_chat,
@@ -448,7 +449,9 @@ class PilotProviderClient:
                         "max_tokens": self.generation.max_output_tokens,
                         "extra_body": {
                             "thinking": {"type": "enabled"},
-                            "reasoning_effort": "max",
+                            "reasoning_effort": (
+                                "max" if reasoning_effort == "xhigh" else reasoning_effort
+                            ),
                         },
                     }
                 )
@@ -456,7 +459,7 @@ class PilotProviderClient:
                 common.update(
                     {
                         "max_completion_tokens": self.generation.max_output_tokens,
-                        "reasoning_effort": self.generation.reasoning_effort,
+                        "reasoning_effort": reasoning_effort,
                     }
                 )
         else:
@@ -464,7 +467,7 @@ class PilotProviderClient:
                 {
                     "input": rendered,
                     "max_output_tokens": self.generation.max_output_tokens,
-                    "reasoning": {"effort": self.generation.reasoning_effort},
+                    "reasoning": {"effort": reasoning_effort},
                     "store": False,
                 }
             )

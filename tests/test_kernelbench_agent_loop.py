@@ -224,6 +224,7 @@ def test_pilot_study_is_the_small_24_trajectory_matrix() -> None:
         ("deepseek-v4-flash", "chat_completions"),
         ("gpt-5.6-luna", "responses"),
     ]
+    assert [model.reasoning_effort for model in study.models] == ["high", None]
     assert [task.ref for task in study.tasks] == [
         "level1-problem1",
         "level1-problem24",
@@ -242,6 +243,7 @@ def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
     assert study.trajectory_count == 1
     assert study.request_count == 2
     assert [model.id for model in study.models] == ["deepseek-v4-flash"]
+    assert study.models[0].reasoning_effort == "high"
     assert study.targets == ("triton",)
     assert [task.ref for task in study.tasks] == ["level1-problem1"]
     assert study.generation.reasoning_effort == "xhigh"
@@ -254,6 +256,7 @@ def test_deepseek_pilot_keeps_the_full_workload_target_matrix() -> None:
         REPOSITORY_ROOT / "configs" / "studies" / "kernelbench-agent-deepseek-pilot.yaml"
     )
     assert [model.id for model in study.models] == ["deepseek-v4-flash"]
+    assert study.models[0].reasoning_effort == "high"
     assert study.targets == ("triton", "tilelang", "cute")
     assert [task.ref for task in study.tasks] == [
         "level1-problem1",
@@ -347,6 +350,9 @@ def test_affinity_study_configs_pin_the_minimal_matrices(
     assert study.request_count == requests
     assert study.generation.max_output_tokens == 65536
     assert study.generation.reasoning_effort == "xhigh"
+    assert tuple(model.reasoning_effort for model in study.models) == tuple(
+        "high" if model.id == "deepseek-v4-flash" else None for model in study.models
+    )
     assert all(model.timeout_seconds == 1200.0 for model in study.models)
     assert study.evaluator.timeout_seconds == 900
     assert study.evaluator.num_correct_trials == 5
@@ -830,7 +836,14 @@ def test_pilot_provider_uses_requested_protocol_and_xhigh(
     assert "secret" not in json.dumps(completion.sanitized_request)
 
 
-def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream() -> None:
+@pytest.mark.parametrize(
+    ("requested_effort", "wire_effort"),
+    [("high", "high"), ("xhigh", "max")],
+)
+def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream(
+    requested_effort: str,
+    wire_effort: str,
+) -> None:
     chunks = [
         {
             "id": "chat-stream-1",
@@ -885,6 +898,7 @@ def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream() ->
         update={
             "litellm_provider": "deepseek",
             "api_model": "deepseek/deepseek-v4-flash",
+            "reasoning_effort": requested_effort,
         }
     )
     progress: list[str] = []
@@ -908,7 +922,7 @@ def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream() ->
     assert "reasoning_effort" not in request
     assert request["extra_body"] == {
         "thinking": {"type": "enabled"},
-        "reasoning_effort": "max",
+        "reasoning_effort": wire_effort,
     }
     assert completion.text == _candidate("streamed")
     assert completion.reasoning_content == "reason trace"

@@ -246,6 +246,7 @@ def test_real_litellm_transport_preserves_deepseek_reasoning_history() -> None:
                 api_model="deepseek/deepseek-v4-flash",
                 api_key_env="STUB_API_KEY",
                 base_url_env="STUB_BASE_URL",
+                reasoning_effort="high",
             ),
             AgentGenerationConfig(),
             environment={"STUB_API_KEY": "stub-secret", "STUB_BASE_URL": base_url},
@@ -272,7 +273,7 @@ def test_real_litellm_transport_preserves_deepseek_reasoning_history() -> None:
     assert handler.request_body["max_tokens"] == 16384
     assert "max_completion_tokens" not in handler.request_body
     assert handler.request_body["thinking"] == {"type": "enabled"}
-    assert handler.request_body["reasoning_effort"] == "max"
+    assert handler.request_body["reasoning_effort"] == "high"
     assert handler.request_body["messages"][1] == {
         "role": "assistant",
         "content": '{"action":"finish","nonce":"integration"}',
