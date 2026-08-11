@@ -30,7 +30,17 @@ def test_parser_exposes_split_agent_stages_and_pipeline() -> None:
     assert collect.command == "agent-collect"
     assert collect.live is True
     assert collect.iterations is None
-    assert parser.parse_args(["agent-analyze", "--run", "/tmp/run"]).command == "agent-analyze"
+    analyze = parser.parse_args(
+        [
+            "agent-analyze",
+            "--run",
+            "/tmp/run",
+            "--reference-file",
+            "references.csv",
+        ]
+    )
+    assert analyze.command == "agent-analyze"
+    assert analyze.reference_file == "references.csv"
     assert parser.parse_args(["agent-plot", "--run", "/tmp/run"]).command == "agent-plot"
 
 
@@ -75,9 +85,12 @@ def test_pipeline_chains_collect_and_derived_stages(
         calls.append("collect")
         return study, collection
 
-    def fake_analyze(path: Path) -> tuple[dict[str, str], Path, Path]:
+    def fake_analyze(
+        path: Path, *, reference_file: str | None = None
+    ) -> tuple[dict[str, str], Path, Path]:
         calls.append("analyze")
         assert path == run_directory
+        assert reference_file == "references.csv"
         return {"run_id": "run"}, path / "metrics.json", path / "metrics.csv"
 
     def fake_plot(path: Path) -> tuple[Path, Path, Path, Path]:
@@ -88,7 +101,9 @@ def test_pipeline_chains_collect_and_derived_stages(
     monkeypatch.setattr(cli, "_collect_agent", fake_collect)
     monkeypatch.setattr(cli, "analyze_agent_run", fake_analyze)
     monkeypatch.setattr(cli, "plot_agent_run", fake_plot)
-    arguments = Namespace(command="agent-pipeline", live=True)
+    arguments = Namespace(
+        command="agent-pipeline", live=True, reference_file="references.csv"
+    )
 
     status = cli._agent_pipeline(arguments)
 
@@ -100,9 +115,21 @@ def test_analyze_command_does_not_require_live(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(
         cli,
         "analyze_agent_run",
-        lambda path: ({"run_id": "offline"}, Path("metrics.json"), Path("metrics.csv")),
+        lambda path, *, reference_file=None: (
+            {"run_id": "offline", "reference_file": reference_file},
+            Path("metrics.json"),
+            Path("metrics.csv"),
+        ),
     )
-    status = cli.main(["agent-analyze", "--run", "/tmp/offline-run"])
+    status = cli.main(
+        [
+            "agent-analyze",
+            "--run",
+            "/tmp/offline-run",
+            "--reference-file",
+            "references.csv",
+        ]
+    )
     payload = json.loads(capsys.readouterr().out)
     assert status == cli.EXIT_OK
     assert payload["run_id"] == "offline"

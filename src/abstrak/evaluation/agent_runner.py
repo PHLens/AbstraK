@@ -32,6 +32,7 @@ from abstrak.evaluation.agent_provider import (
     AgentMessage,
     AgentOutputTruncated,
     AgentProviderError,
+    AgentUsage,
 )
 from abstrak.evaluation.agent_worker import AgentEvaluationJob
 from abstrak.evaluation.contracts import (
@@ -506,6 +507,7 @@ class AgentCollectionRunner:
         candidate_path: Path | None = None,
         log_path: Path | None = None,
         provider_elapsed_ms: float | None = None,
+        provider_usage: AgentUsage | None = None,
         error: str | None = None,
     ) -> AgentAttemptRecord:
         correct = bool(result and result.correctness)
@@ -527,10 +529,26 @@ class AgentCollectionRunner:
             best_speedup=best_speedup,
             provider_request_id=(completion.provider_request_id if completion else None),
             returned_model=(completion.returned_model if completion else None),
-            input_tokens=(completion.input_tokens if completion else None),
-            cached_input_tokens=(completion.cached_input_tokens if completion else None),
-            output_tokens=(completion.output_tokens if completion else None),
-            reasoning_tokens=(completion.reasoning_tokens if completion else None),
+            input_tokens=(
+                completion.input_tokens
+                if completion
+                else provider_usage.input_tokens if provider_usage else None
+            ),
+            cached_input_tokens=(
+                completion.cached_input_tokens
+                if completion
+                else provider_usage.cached_input_tokens if provider_usage else None
+            ),
+            output_tokens=(
+                completion.output_tokens
+                if completion
+                else provider_usage.output_tokens if provider_usage else None
+            ),
+            reasoning_tokens=(
+                completion.reasoning_tokens
+                if completion
+                else provider_usage.reasoning_tokens if provider_usage else None
+            ),
             provider_elapsed_ms=(completion.elapsed_ms if completion else provider_elapsed_ms),
             response_path=(_relative(response_path, self.run_directory) if response_path else None),
             candidate_path=(
@@ -607,6 +625,7 @@ class AgentCollectionRunner:
                         generation_status="output_truncated",
                         response_path=response_path,
                         provider_elapsed_ms=error.elapsed_ms,
+                        provider_usage=error.usage,
                         error=str(error),
                     )
                 )
@@ -650,6 +669,7 @@ class AgentCollectionRunner:
                         generation_status="provider_error",
                         response_path=response_path,
                         provider_elapsed_ms=error.elapsed_ms,
+                        provider_usage=error.usage,
                         error=str(error),
                     )
                 )

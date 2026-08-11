@@ -553,6 +553,11 @@ def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path
         elapsed_ms=3.0,
         sanitized_request={"model": "test/model"},
         raw_response={
+            "usage": {
+                "prompt_tokens": 11,
+                "completion_tokens": 13,
+                "completion_tokens_details": {"reasoning_tokens": 7},
+            },
             "stream": {
                 "chunk_count": 7,
                 "reasoning_chars": 31,
@@ -585,6 +590,9 @@ def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path
         for line in (result.run_directory / "raw" / "attempts.jsonl").read_text().splitlines()
     ]
     assert attempts[0]["provider_elapsed_ms"] == 3.0
+    assert attempts[0]["input_tokens"] == 11
+    assert attempts[0]["output_tokens"] == 13
+    assert attempts[0]["reasoning_tokens"] == 7
     response = json.loads(
         (
             result.run_directory
@@ -612,7 +620,12 @@ def test_output_truncation_consumes_iteration_and_retries_without_empty_assistan
                     "finish_reason": "length",
                     "message": {"role": "assistant", "content": ""},
                 }
-            ]
+            ],
+            "usage": {
+                "prompt_tokens": 17,
+                "completion_tokens": 65536,
+                "completion_tokens_details": {"reasoning_tokens": 65536},
+            },
         },
     )
     client = FakeClient([truncated, _completion(_candidate("recovered"), "r2")])
@@ -640,6 +653,9 @@ def test_output_truncation_consumes_iteration_and_retries_without_empty_assistan
         "output_truncated",
         "generated",
     ]
+    assert attempts[0]["input_tokens"] == 17
+    assert attempts[0]["output_tokens"] == 65536
+    assert attempts[0]["reasoning_tokens"] == 65536
     truncated_response = json.loads(
         (
             result.run_directory
@@ -922,6 +938,11 @@ def test_pilot_provider_preserves_partial_stream_metadata_on_error() -> None:
                     "delta": {"role": "assistant", "reasoning_content": "partial"},
                 }
             ],
+            "usage": {
+                "prompt_tokens": 23,
+                "completion_tokens": 29,
+                "completion_tokens_details": {"reasoning_tokens": 19},
+            },
         }
         raise TimeoutError("read stalled")
 
@@ -956,6 +977,9 @@ def test_pilot_provider_preserves_partial_stream_metadata_on_error() -> None:
         "content": "",
     }
     assert error.sanitized_request is not None
+    assert error.usage.input_tokens == 23
+    assert error.usage.output_tokens == 29
+    assert error.usage.reasoning_tokens == 19
 
 
 def test_pilot_provider_enforces_wall_clock_deadline() -> None:
@@ -1043,6 +1067,55 @@ def test_pilot_provider_classifies_reasoning_only_length_stream() -> None:
     assert error.raw_response["choices"][0]["message"]["content"] == ""
     assert error.raw_response["usage"]["completion_tokens"] == 65536
     assert error.sanitized_request is not None
+    assert error.usage.input_tokens == 7
+    assert error.usage.output_tokens == 65536
+    assert error.usage.reasoning_tokens == 65536
+
+
+def test_pilot_provider_classifies_partial_chat_text_as_truncated() -> None:
+    payload = {
+        "choices": [
+            {
+                "finish_reason": "length",
+                "message": {"content": "```python\nclass ModelNew:"},
+            }
+        ],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 31},
+    }
+    client = PilotProviderClient(
+        _model(),
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=FakeTransport(payload),
+    )
+
+    with pytest.raises(AgentOutputTruncated) as raised:
+        client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
+
+    assert raised.value.usage.input_tokens == 5
+    assert raised.value.usage.output_tokens == 31
+
+
+def test_pilot_provider_classifies_incomplete_responses_output_as_truncated() -> None:
+    payload = {
+        "id": "response-incomplete",
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+        "output_text": "```python\nclass ModelNew:",
+        "usage": {"input_tokens": 37, "output_tokens": 41},
+    }
+    client = PilotProviderClient(
+        _model(protocol="responses"),
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=FakeTransport(payload),
+    )
+
+    with pytest.raises(AgentOutputTruncated) as raised:
+        client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
+
+    assert raised.value.usage.input_tokens == 37
+    assert raised.value.usage.output_tokens == 41
 
 
 def test_pilot_provider_keeps_an_explicit_falsy_transport() -> None:

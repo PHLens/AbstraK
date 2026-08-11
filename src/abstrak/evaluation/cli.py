@@ -213,6 +213,10 @@ def _parser() -> argparse.ArgumentParser:
         "agent-analyze", help="derive metrics from raw agent attempts"
     )
     agent_analyze.add_argument("--run", required=True, help="agent run directory")
+    agent_analyze.add_argument(
+        "--reference-file",
+        help="optional task/target reference-speedup CSV",
+    )
 
     agent_plot = subparsers.add_parser(
         "agent-plot", help="render the two pilot figures from derived metrics"
@@ -223,6 +227,10 @@ def _parser() -> argparse.ArgumentParser:
         "agent-pipeline", help="collect, analyze, and plot in one command"
     )
     _add_agent_collection_inputs(agent_pipeline)
+    agent_pipeline.add_argument(
+        "--reference-file",
+        help="optional task/target reference-speedup CSV",
+    )
     return parser
 
 
@@ -439,7 +447,10 @@ def _agent_collect(arguments: argparse.Namespace) -> int:
 
 
 def _agent_analyze(arguments: argparse.Namespace) -> int:
-    metrics, metrics_json, metrics_csv = analyze_agent_run(arguments.run)
+    metrics, metrics_json, metrics_csv = analyze_agent_run(
+        arguments.run,
+        reference_file=getattr(arguments, "reference_file", None),
+    )
     _emit(
         {
             "status": "complete",
@@ -459,7 +470,10 @@ def _agent_plot(arguments: argparse.Namespace) -> int:
 
 def _agent_pipeline(arguments: argparse.Namespace) -> int:
     study, collection = _collect_agent(arguments)
-    metrics, metrics_json, metrics_csv = analyze_agent_run(collection.run_directory)
+    metrics, metrics_json, metrics_csv = analyze_agent_run(
+        collection.run_directory,
+        reference_file=getattr(arguments, "reference_file", None),
+    )
     figures = plot_agent_run(collection.run_directory)
     _emit(
         {

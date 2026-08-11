@@ -79,8 +79,18 @@ def _attempt(
     target: str,
     iteration: int,
     speedup: float | None,
+    input_tokens: int | None = None,
+    cached_input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    reasoning_tokens: int | None = None,
+    generation_status: str = "generated",
+    evaluation_status: str | None = None,
+    response_path: str | None = None,
 ) -> AgentAttemptRecord:
     correct = speedup is not None
+    resolved_evaluation_status = evaluation_status or (
+        "evaluated" if generation_status == "generated" else "not_run"
+    )
     return AgentAttemptRecord(
         run_id="synthetic-run",
         trajectory_id=f"{model_id}-{task_ref}-{target}",
@@ -89,14 +99,19 @@ def _attempt(
         task_name=task_name,
         target=target,
         iteration=iteration,
-        generation_status="generated",
-        evaluation_status="evaluated",
+        generation_status=generation_status,
+        evaluation_status=resolved_evaluation_status,
         compiled=correct,
         correct=correct,
         candidate_runtime_ms=10.0 / speedup if speedup is not None else None,
         reference_runtime_ms=10.0 if speedup is not None else None,
         speedup=speedup,
         best_speedup=speedup,
+        input_tokens=input_tokens,
+        cached_input_tokens=cached_input_tokens,
+        output_tokens=output_tokens,
+        reasoning_tokens=reasoning_tokens,
+        response_path=response_path,
         error=None if correct else "synthetic incorrect candidate",
     )
 
@@ -203,13 +218,329 @@ def test_analyze_agent_run_writes_curves_winners_and_oracle_gain(tmp_path: Path)
     assert persisted == metrics
     with csv_path.open(encoding="utf-8", newline="") as handle:
         csv_rows = list(csv.DictReader(handle))
-    assert len(csv_rows) == 126
+    assert metrics["token_budgets"] == []
+    assert len(metrics["trajectory_usage_rows"]) == 24
+    assert len(metrics["target_health_rows"]) == 6
+    assert all(row["static_check_passes"] == 12 for row in metrics["target_health_rows"])
+    assert len(csv_rows) == 156
     assert {row["record_type"] for row in csv_rows} == {
         "curve",
         "winner",
         "aggregate",
         "task_oracle_gain",
+        "trajectory_usage",
+        "target_health",
     }
+
+
+def _write_token_run(
+    tmp_path: Path,
+    *,
+    unknown_target: str | None = None,
+    raw_usage_target: str | None = None,
+) -> Path:
+    run_path = tmp_path / f"token-run-{unknown_target or 'exact'}-{raw_usage_target or 'direct'}"
+    raw_path = run_path / "raw"
+    raw_path.mkdir(parents=True)
+    study = {
+        "schema_version": "kernelbench-agent-study.v1",
+        "id": "token-agent-pilot",
+        "source": {
+            "repository": "https://example.test/KernelBench.git",
+            "commit": "b" * 40,
+            "require_clean_checkout": True,
+        },
+        "models": [
+            {
+                "id": "deepseek-v4-flash",
+                "protocol": "chat_completions",
+                "litellm_provider": "deepseek",
+                "api_model": "deepseek/deepseek-v4-flash",
+                "api_key_env": "DEEPSEEK_API_KEY",
+            }
+        ],
+        "targets": list(TARGETS),
+        "tasks": [{"level": 1, "problem_id": 1, "stratum": "control"}],
+        "precision": "fp16",
+        "iterations": 2,
+    }
+    (raw_path / "run.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "kernelbench-agent-run.v1",
+                "run_id": run_path.name,
+                "study": study,
+                "iterations": 2,
+                "trajectory_count": 3,
+                "completed_at_utc": "2026-08-11T00:00:00Z",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    first_speedups = {"triton": 0.8, "tilelang": 2.0, "cute": None}
+    final_speedups = {"triton": 3.0, "tilelang": 2.5, "cute": 4.0}
+    attempts: list[AgentAttemptRecord] = []
+    for target in TARGETS:
+        first_input = None if target in {unknown_target, raw_usage_target} else 1
+        first_output = None if target in {unknown_target, raw_usage_target} else 2
+        response_path = None
+        generation_status = "generated"
+        evaluation_status = "evaluated"
+        if target == raw_usage_target:
+            generation_status = "output_truncated"
+            evaluation_status = "not_run"
+            response_path = f"raw/responses/{target}/iteration-001.json"
+            artifact = run_path / response_path
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "kernelbench-agent-provider-error.v1",
+                        "raw_response": {
+                            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        attempts.append(
+            _attempt(
+                model_id="deepseek-v4-flash",
+                task_ref="level1-problem1",
+                task_name="Square_Matrix_Multiplication",
+                target=target,
+                iteration=1,
+                speedup=(None if target == raw_usage_target else first_speedups[target]),
+                input_tokens=first_input,
+                cached_input_tokens=(1 if first_input is not None else None),
+                output_tokens=first_output,
+                reasoning_tokens=(2 if first_output is not None else None),
+                generation_status=generation_status,
+                evaluation_status=evaluation_status,
+                response_path=response_path,
+            )
+        )
+        attempts.append(
+            _attempt(
+                model_id="deepseek-v4-flash",
+                task_ref="level1-problem1",
+                task_name="Square_Matrix_Multiplication",
+                target=target,
+                iteration=2,
+                speedup=final_speedups[target],
+                input_tokens=3,
+                output_tokens=4,
+            )
+        )
+    (raw_path / "attempts.jsonl").write_text(
+        "".join(attempt.model_dump_json() + "\n" for attempt in attempts),
+        encoding="utf-8",
+    )
+    return run_path
+
+
+def test_token_analysis_uses_exact_cost_and_equal_split_step_function(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path)
+
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    assert metrics["token_budgets"] == [0, 3, 10]
+    triton_usage = next(
+        row
+        for row in metrics["trajectory_usage_rows"]
+        if row["target"] == "triton"
+    )
+    assert triton_usage["exact_prefix_tokens"] == 10
+    assert triton_usage["known_token_lower_bound"] == 10
+    assert triton_usage["usage_status"] == "exact"
+
+    triton_at_three = next(
+        row
+        for row in metrics["token_curve_rows"]
+        if row["target"] == "triton" and row["token_budget"] == 3
+    )
+    assert triton_at_three["best_speedup"] == pytest.approx(0.8)
+    assert triton_at_three["deployment_utility"] == 1.0
+    aggregate = next(
+        row for row in metrics["token_aggregates"] if row["token_budget"] == 10
+    )
+    assert aggregate["best_fixed_target"] == "cute"
+    assert aggregate["best_fixed_geomean_utility"] == pytest.approx(4.0)
+    assert aggregate["equal_split_per_target_budget"] == 3
+    assert aggregate["equal_split_unspent_tokens"] == 1
+    assert aggregate["equal_split_budget_status"] == "exact"
+    assert aggregate["equal_split_geomean_utility"] == pytest.approx(2.0)
+    assert aggregate["equal_split_gain_ratio"] == pytest.approx(0.5)
+
+
+def test_token_analysis_recovers_truncation_usage_from_response_artifact(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path, raw_usage_target="cute")
+
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    cute_usage = next(
+        row for row in metrics["trajectory_usage_rows"] if row["target"] == "cute"
+    )
+    assert cute_usage["exact_prefix_tokens"] == 10
+    assert cute_usage["usage_status"] == "exact"
+    assert "raw_response" in cute_usage["usage_source"]
+
+
+def test_unknown_usage_censors_later_token_budget_without_hiding_iterations(
+    tmp_path: Path,
+) -> None:
+    run_path = _write_token_run(tmp_path, unknown_target="tilelang")
+
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    assert any(
+        row["target"] == "tilelang" and row["iteration"] == 2
+        for row in metrics["curve_rows"]
+    )
+    censored = next(
+        row
+        for row in metrics["token_curve_rows"]
+        if row["target"] == "tilelang" and row["token_budget"] == 10
+    )
+    assert censored["budget_status"] == "censored"
+    aggregate = next(
+        row for row in metrics["token_aggregates"] if row["token_budget"] == 10
+    )
+    assert aggregate["model_id"] == "deepseek-v4-flash"
+    assert aggregate["token_budget"] == 10
+    assert aggregate["budget_status"] == "censored"
+    assert aggregate["equal_split_budget_status"] == "censored"
+    assert aggregate["equal_split_geomean_utility"] is None
+
+
+def test_early_terminated_trajectory_does_not_carry_into_later_budget(
+    tmp_path: Path,
+) -> None:
+    run_path = _write_token_run(tmp_path)
+    attempts_path = run_path / "raw" / "attempts.jsonl"
+    attempts = [
+        AgentAttemptRecord.model_validate_json(line)
+        for line in attempts_path.read_text(encoding="utf-8").splitlines()
+    ]
+    attempts = [
+        attempt
+        for attempt in attempts
+        if not (attempt.target == "tilelang" and attempt.iteration == 2)
+    ]
+    attempts_path.write_text(
+        "".join(attempt.model_dump_json() + "\n" for attempt in attempts),
+        encoding="utf-8",
+    )
+
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    tilelang_at_ten = next(
+        row
+        for row in metrics["token_curve_rows"]
+        if row["target"] == "tilelang" and row["token_budget"] == 10
+    )
+    assert tilelang_at_ten["budget_status"] == "censored"
+    assert tilelang_at_ten["best_speedup"] == pytest.approx(2.0)
+    aggregate = next(
+        row for row in metrics["token_aggregates"] if row["token_budget"] == 10
+    )
+    assert aggregate["budget_status"] == "censored"
+    assert aggregate["equal_split_budget_status"] == "exact"
+    assert aggregate["equal_split_geomean_utility"] == pytest.approx(2.0)
+    assert aggregate["equal_split_gain_ratio"] is None
+
+
+def test_best_fixed_tie_uses_correctness_coverage_as_scalar_tiebreak(
+    tmp_path: Path,
+) -> None:
+    run_path = _write_token_run(tmp_path)
+    attempts_path = run_path / "raw" / "attempts.jsonl"
+    attempts = [
+        AgentAttemptRecord.model_validate_json(line)
+        for line in attempts_path.read_text(encoding="utf-8").splitlines()
+    ]
+    attempts = [
+        (
+            attempt.model_copy(
+                update={
+                    "compiled": False,
+                    "correct": False,
+                    "candidate_runtime_ms": None,
+                    "reference_runtime_ms": None,
+                    "speedup": None,
+                    "best_speedup": None,
+                    "error": "synthetic incorrect candidate",
+                }
+            )
+            if attempt.target == "tilelang" and attempt.iteration == 1
+            else attempt
+        )
+        for attempt in attempts
+    ]
+    attempts_path.write_text(
+        "".join(attempt.model_dump_json() + "\n" for attempt in attempts),
+        encoding="utf-8",
+    )
+
+    metrics, _, _ = analyze_agent_run(run_path)
+
+    aggregate = next(
+        row for row in metrics["token_aggregates"] if row["token_budget"] == 3
+    )
+    assert aggregate["tied_best_fixed_targets"] == list(TARGETS)
+    assert aggregate["best_fixed_target"] == "triton"
+    assert aggregate["best_fixed_correctness_coverage"] == pytest.approx(1.0)
+
+
+def test_optional_reference_overlay_is_partial_and_non_blocking(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path)
+    reference_file = tmp_path / "references.csv"
+    reference_file.write_text(
+        "task_ref,target,speedup,label\n"
+        "level1-problem1,triton,3.0,expert-v1\n"
+        "level1-problem1,tilelang,5.0,expert-v1\n"
+        "level1-problem1,cute,4.0,expert-v1\n",
+        encoding="utf-8",
+    )
+
+    metrics, _, _ = analyze_agent_run(run_path, reference_file=reference_file)
+
+    assert metrics["reference_file_sha256"] is not None
+    assert len(metrics["reference_rows"]) == 3
+    assert all(
+        row["reference_winner_targets"] == ["tilelang"]
+        for row in metrics["reference_rows"]
+    )
+    cute_at_ten = next(
+        row
+        for row in metrics["token_curve_rows"]
+        if row["target"] == "cute" and row["token_budget"] == 10
+    )
+    assert cute_at_ten["reference_realization"] == pytest.approx(1.0)
+
+    partial_file = tmp_path / "partial.csv"
+    partial_file.write_text(
+        "task_ref,target,speedup,label\nlevel1-problem1,triton,3.0,expert-v1\n",
+        encoding="utf-8",
+    )
+    partial_metrics, _, _ = analyze_agent_run(run_path, reference_file=partial_file)
+    assert partial_metrics["reference_rows"][0]["reference_winner_status"] == "incomplete"
+
+
+def test_malformed_reference_row_has_analysis_error(tmp_path: Path) -> None:
+    run_path = _write_token_run(tmp_path)
+    reference_file = tmp_path / "malformed.csv"
+    reference_file.write_text(
+        "task_ref,target,speedup,label\nlevel1-problem1,triton\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AgentAnalysisError, match="invalid reference speedup"):
+        analyze_agent_run(run_path, reference_file=reference_file)
 
 
 def test_analyze_agent_run_rejects_duplicate_attempt_coordinate(tmp_path: Path) -> None:

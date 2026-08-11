@@ -8,6 +8,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,6 +16,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from abstrak.evaluation.agent_contracts import AgentGenerationConfig, AgentModelSpec
 from abstrak.providers.contracts import MessageRole
 from abstrak.providers.native_transport import LiteLLMNativeTransport, NativeTransport
+
+
+@dataclass(frozen=True)
+class AgentUsage:
+    input_tokens: int | None = None
+    cached_input_tokens: int | None = None
+    output_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 class AgentProviderError(RuntimeError):
@@ -30,6 +39,7 @@ class AgentProviderError(RuntimeError):
         self.elapsed_ms = elapsed_ms
         self.raw_response = raw_response
         self.sanitized_request = sanitized_request
+        self.usage = extract_agent_usage(raw_response)
 
 
 class AgentOutputTruncated(AgentProviderError):
@@ -142,6 +152,27 @@ def _optional_int(mapping: Mapping[str, Any], *paths: tuple[str, ...]) -> int | 
     return None
 
 
+def extract_agent_usage(payload: Mapping[str, Any] | None) -> AgentUsage:
+    if payload is None:
+        return AgentUsage()
+    usage = payload.get("usage")
+    usage = usage if isinstance(usage, Mapping) else {}
+    return AgentUsage(
+        input_tokens=_optional_int(usage, ("input_tokens",), ("prompt_tokens",)),
+        cached_input_tokens=_optional_int(
+            usage,
+            ("input_tokens_details", "cached_tokens"),
+            ("prompt_tokens_details", "cached_tokens"),
+        ),
+        output_tokens=_optional_int(usage, ("output_tokens",), ("completion_tokens",)),
+        reasoning_tokens=_optional_int(
+            usage,
+            ("output_tokens_details", "reasoning_tokens"),
+            ("completion_tokens_details", "reasoning_tokens"),
+        ),
+    )
+
+
 def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
@@ -149,14 +180,14 @@ def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
     message = choices[0].get("message")
     if not isinstance(message, Mapping):
         raise ValueError("chat response has no message")
+    finish_reason = choices[0].get("finish_reason")
+    if finish_reason == "length":
+        raise _ChatOutputTruncated(
+            "chat response exhausted max_tokens before completing final text "
+            "(finish_reason=length)"
+        )
     content = message.get("content")
     if not isinstance(content, str) or not content:
-        finish_reason = choices[0].get("finish_reason")
-        if finish_reason == "length":
-            raise _ChatOutputTruncated(
-                "chat response exhausted max_tokens before emitting final text "
-                "(finish_reason=length)"
-            )
         raise ValueError(f"chat response has no text (finish_reason={finish_reason})")
     reasoning_content = message.get("reasoning_content")
     if not isinstance(reasoning_content, str) or not reasoning_content:
@@ -349,6 +380,19 @@ def _responses_text(payload: Mapping[str, Any]) -> str:
     return joined
 
 
+def _check_responses_completion(payload: Mapping[str, Any]) -> None:
+    status = payload.get("status")
+    if status != "incomplete":
+        return
+    details = payload.get("incomplete_details")
+    reason = details.get("reason") if isinstance(details, Mapping) else None
+    if reason in {"max_output_tokens", "max_tokens"}:
+        raise _ChatOutputTruncated(
+            f"Responses output exhausted its budget before completion (reason={reason})"
+        )
+    raise ValueError(f"Responses output is incomplete (reason={reason})")
+
+
 class PilotProviderClient:
     """Make one native call without formal-study conformance machinery."""
 
@@ -455,6 +499,7 @@ class PilotProviderClient:
             if self.model.protocol == "chat_completions":
                 text, reasoning_content = _chat_output(payload)
             else:
+                _check_responses_completion(payload)
                 text = _responses_text(payload)
                 reasoning_content = None
         except _ChatStreamInterrupted as error:
@@ -497,26 +542,17 @@ class PilotProviderClient:
                 sanitized_request=sanitized,
             ) from error
 
-        usage = payload.get("usage")
-        usage = usage if isinstance(usage, Mapping) else {}
+        usage = extract_agent_usage(payload)
         return AgentCompletion(
             text=text,
             reasoning_content=reasoning_content,
             protocol=self.model.protocol,
             provider_request_id=(str(payload["id"]) if payload.get("id") is not None else None),
             returned_model=(str(payload["model"]) if payload.get("model") is not None else None),
-            input_tokens=_optional_int(usage, ("input_tokens",), ("prompt_tokens",)),
-            cached_input_tokens=_optional_int(
-                usage,
-                ("input_tokens_details", "cached_tokens"),
-                ("prompt_tokens_details", "cached_tokens"),
-            ),
-            output_tokens=_optional_int(usage, ("output_tokens",), ("completion_tokens",)),
-            reasoning_tokens=_optional_int(
-                usage,
-                ("output_tokens_details", "reasoning_tokens"),
-                ("completion_tokens_details", "reasoning_tokens"),
-            ),
+            input_tokens=usage.input_tokens,
+            cached_input_tokens=usage.cached_input_tokens,
+            output_tokens=usage.output_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
             elapsed_ms=elapsed_ms,
             sanitized_request=sanitized,
             raw_response=payload,
