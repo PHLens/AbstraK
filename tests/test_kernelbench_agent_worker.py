@@ -310,7 +310,57 @@ def test_agent_job_maps_all_worker_inputs(monkeypatch: pytest.MonkeyPatch) -> No
         "timing_method": "cuda_event",
         "excessive_speedup_threshold": 8.0,
         "static_check": True,
+        "static_forbidden_checks": agent_worker.AGENT_STATIC_FORBIDDEN_CHECKS,
+        "forbidden_source_markers": agent_worker.AGENT_FORBIDDEN_SOURCE_MARKERS,
     }
+
+
+def test_agent_static_policy_is_strict_without_changing_shared_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, _ = _reference_checkout(tmp_path)
+    kernel_eval = FakeKernelEval()
+    static_calls: list[dict[str, Any]] = []
+
+    def validate_static(source: str, **kwargs: Any) -> object:
+        static_calls.append({"source": source, **kwargs})
+        return True, [], []
+
+    monkeypatch.setattr(
+        worker,
+        "_load_kernelbench_runtime",
+        lambda unused_root: (FakeTorch(), kernel_eval, validate_static),
+    )
+
+    result = worker.evaluate_kernelbench_task_candidate(
+        cell_id="attempt-strict",
+        task_level=1,
+        problem_id=1,
+        target="triton",
+        precision="fp16",
+        candidate_source="class ModelNew: pass\n# load_inline\n",
+        kernelbench_root=root,
+        device="cuda:0",
+        num_correct_trials=5,
+        num_perf_trials=100,
+        timing_method="cuda_event",
+        excessive_speedup_threshold=10.0,
+        static_check=True,
+        static_forbidden_checks=agent_worker.AGENT_STATIC_FORBIDDEN_CHECKS,
+        forbidden_source_markers=agent_worker.AGENT_FORBIDDEN_SOURCE_MARKERS,
+    )
+
+    assert result.status == "static_check_failed"
+    assert result.static_errors == ("contains forbidden source marker: load_inline",)
+    assert static_calls == [
+        {
+            "source": "class ModelNew: pass\n# load_inline\n",
+            "backend": "triton",
+            "precision": "fp16",
+            "forbidden": list(agent_worker.AGENT_STATIC_FORBIDDEN_CHECKS),
+        }
+    ]
+    assert kernel_eval.calls == []
 
 
 def test_agent_worker_reads_one_json_job_and_writes_one_json_result(

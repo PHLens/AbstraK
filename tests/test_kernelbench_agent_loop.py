@@ -177,15 +177,25 @@ def test_extract_runnable_candidate_requires_one_complete_modelnew() -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "required_api"),
+    ("target", "required_apis"),
     [
-        ("triton", "@triton.jit"),
-        ("tilelang", "@T.prim_func"),
-        ("cute", "import cutlass.cute as cute"),
+        ("triton", ("@triton.jit", "_vector_add_kernel[grid]")),
+        ("tilelang", ("@T.prim_func", "tilelang.compile", "return self.kernel(x, y)")),
+        (
+            "cute",
+            (
+                "import cutlass.cute as cute",
+                "@cute.kernel",
+                "@cute.jit",
+                ".launch(",
+                "cute.compile",
+                "from_dlpack",
+            ),
+        ),
     ],
 )
-def test_initial_messages_include_concise_target_contract(
-    target: TargetName, required_api: str
+def test_initial_messages_include_complete_target_card(
+    target: TargetName, required_apis: tuple[str, ...]
 ) -> None:
     messages = build_initial_messages(
         FakeCheckout(),
@@ -196,9 +206,9 @@ def test_initial_messages_include_concise_target_contract(
 
     assert len(messages) == 1
     assert "TARGET CONTRACT (must follow)" in messages[0].content
-    assert required_api in messages[0].content
+    assert all(required_api in messages[0].content for required_api in required_apis)
     assert "Reason concisely" in messages[0].content
-    assert "## Model scaffold and launch example" not in messages[0].content
+    assert "## Model scaffold and launch example" in messages[0].content
     if target == "cute":
         assert "compile a custom CUDA extension" in " ".join(messages[0].content.split())
 

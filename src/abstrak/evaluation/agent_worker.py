@@ -17,6 +17,16 @@ from abstrak.evaluation.contracts import (
 )
 from abstrak.evaluation.worker import evaluate_kernelbench_task_candidate
 
+AGENT_STATIC_FORBIDDEN_CHECKS = (
+    "code_bypass",
+    "timing_event_patch",
+    "thread_injection",
+    "lazy_eval",
+    "pytorch_wrap",
+    "torch_computation_ops",
+)
+AGENT_FORBIDDEN_SOURCE_MARKERS = ("load_inline", "cpp_extension", "__global__")
+
 
 class AgentEvaluationJob(BaseModel):
     """One self-contained evaluation job sent to a GPU worker over stdin."""
@@ -54,6 +64,8 @@ def evaluate_agent_job(job: AgentEvaluationJob) -> EvaluationResult:
         timing_method=job.evaluator.timing_method,
         excessive_speedup_threshold=job.evaluator.excessive_speedup_threshold,
         static_check=job.evaluator.static_check,
+        static_forbidden_checks=AGENT_STATIC_FORBIDDEN_CHECKS,
+        forbidden_source_markers=AGENT_FORBIDDEN_SOURCE_MARKERS,
     )
 
 

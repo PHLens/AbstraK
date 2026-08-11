@@ -58,7 +58,6 @@ _TARGET_STACK_IDS: dict[TargetName, str] = {
     "tilelang": "tilelang-a100",
     "cute": "cute-a100",
 }
-_TARGET_CARD_EXAMPLE_HEADING = "\n## Model scaffold"
 _DIAGNOSTIC_METADATA_KEYS = (
     "compilation_error_name",
     "compilation_error",
@@ -161,13 +160,10 @@ def build_initial_messages(
     precision: Precision,
 ) -> list[AgentMessage]:
     target_card = load_target_card(_TARGET_STACK_IDS[target])
-    target_contract, separator, _ = target_card.partition(_TARGET_CARD_EXAMPLE_HEADING)
-    if not separator:
-        raise AgentCollectionError(f"target card has no contract boundary: {target}")
     prompt = (
         checkout.zero_shot_prompt(material, target, precision)
         + "\n\nTARGET CONTRACT (must follow)\n"
-        + target_contract.strip()
+        + target_card.strip()
         + "\n\n"
         + RUNNABLE_OUTPUT_CONTRACT
     )

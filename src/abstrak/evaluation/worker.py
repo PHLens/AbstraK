@@ -8,6 +8,7 @@ import importlib.metadata
 import json
 import platform
 import sys
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,8 @@ def evaluate_candidate_source(
     timing_method: str,
     excessive_speedup_threshold: float,
     static_check: bool,
+    static_forbidden_checks: Sequence[str] | None = None,
+    forbidden_source_markers: Sequence[str] = (),
 ) -> EvaluationResult:
     """Evaluate one candidate while leaving task and artifact ownership to the caller."""
 
@@ -185,13 +188,23 @@ def evaluate_candidate_source(
     static_warnings: tuple[str, ...] = ()
     if static_check:
         try:
+            static_options: dict[str, Any] = {}
+            if static_forbidden_checks is not None:
+                static_options["forbidden"] = list(static_forbidden_checks)
             valid, errors, warnings = validate_kernel_static(
                 candidate_source,
                 backend=target,
                 precision=precision,
+                **static_options,
             )
-            static_errors = tuple(str(item) for item in errors)
+            marker_errors = tuple(
+                f"contains forbidden source marker: {marker}"
+                for marker in forbidden_source_markers
+                if marker in candidate_source
+            )
+            static_errors = (*tuple(str(item) for item in errors), *marker_errors)
             static_warnings = tuple(str(item) for item in warnings)
+            valid = valid and not marker_errors
         except Exception as error:
             return _result(
                 cell_id=cell_id,
@@ -290,6 +303,8 @@ def evaluate_kernelbench_task_candidate(
     timing_method: str,
     excessive_speedup_threshold: float,
     static_check: bool,
+    static_forbidden_checks: Sequence[str] | None = None,
+    forbidden_source_markers: Sequence[str] = (),
 ) -> EvaluationResult:
     """Load a KernelBench task and evaluate a candidate against its reference."""
 
@@ -323,6 +338,8 @@ def evaluate_kernelbench_task_candidate(
         timing_method=timing_method,
         excessive_speedup_threshold=excessive_speedup_threshold,
         static_check=static_check,
+        static_forbidden_checks=static_forbidden_checks,
+        forbidden_source_markers=forbidden_source_markers,
     )
 
 
