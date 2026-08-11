@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
+import signal
+import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,9 +18,22 @@ from abstrak.providers.native_transport import LiteLLMNativeTransport, NativeTra
 
 
 class AgentProviderError(RuntimeError):
-    def __init__(self, message: str, *, elapsed_ms: float) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        elapsed_ms: float,
+        raw_response: dict[str, Any] | None = None,
+        sanitized_request: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.elapsed_ms = elapsed_ms
+        self.raw_response = raw_response
+        self.sanitized_request = sanitized_request
+
+
+class AgentOutputTruncated(AgentProviderError):
+    """The model used its output budget before emitting a final answer."""
 
 
 class AgentMessage(BaseModel):
@@ -52,6 +68,53 @@ class AgentCompletionClient(Protocol):
         *,
         progress: Callable[[str], None] | None = None,
     ) -> AgentCompletion: ...
+
+
+class _ChatOutputTruncated(ValueError):
+    pass
+
+
+class _ProviderWallClockTimeout(BaseException):
+    def __init__(self, timeout_seconds: float) -> None:
+        super().__init__(f"provider wall-clock deadline exceeded {timeout_seconds:g}s")
+
+
+class _ChatStreamInterrupted(Exception):
+    def __init__(self, cause: BaseException, partial_response: dict[str, Any]) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.partial_response = partial_response
+
+
+@contextlib.contextmanager
+def _provider_wall_clock_deadline(timeout_seconds: float) -> Iterator[None]:
+    """Interrupt a stuck native request instead of relying on its read timeout alone."""
+
+    if (
+        not hasattr(signal, "SIGALRM")
+        or not hasattr(signal, "setitimer")
+        or not hasattr(signal, "getitimer")
+        or not hasattr(signal, "ITIMER_REAL")
+        or threading.current_thread() is not threading.main_thread()
+    ):
+        yield
+        return
+    previous_delay, previous_interval = signal.getitimer(signal.ITIMER_REAL)
+    if previous_delay > 0 or previous_interval > 0:
+        yield
+        return
+
+    def expire(_signum: int, _frame: Any) -> None:
+        raise _ProviderWallClockTimeout(timeout_seconds)
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -89,6 +152,11 @@ def _chat_output(payload: Mapping[str, Any]) -> tuple[str, str | None]:
     content = message.get("content")
     if not isinstance(content, str) or not content:
         finish_reason = choices[0].get("finish_reason")
+        if finish_reason == "length":
+            raise _ChatOutputTruncated(
+                "chat response exhausted max_tokens before emitting final text "
+                "(finish_reason=length)"
+            )
         raise ValueError(f"chat response has no text (finish_reason={finish_reason})")
     reasoning_content = message.get("reasoning_content")
     if not isinstance(reasoning_content, str) or not reasoning_content:
@@ -139,6 +207,40 @@ def _aggregate_chat_stream(
     chunk_count = 0
     last_progress_at: float | None = None
 
+    def stream_metadata(*, completed: bool) -> dict[str, Any]:
+        return {
+            "chunk_count": chunk_count,
+            "reasoning_chars": sum(map(len, reasoning_parts)),
+            "content_chars": sum(map(len, content_parts)),
+            "completed": completed,
+        }
+
+    def partial_response() -> dict[str, Any]:
+        return {
+            "id": response_id,
+            "created": created,
+            "model": returned_model,
+            "object": "chat.completion.stream.aggregate",
+            "system_fingerprint": system_fingerprint,
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish_reason,
+                    "message": {"role": "assistant", "content": ""},
+                }
+            ],
+            "usage": usage,
+            "stream": stream_metadata(completed=False),
+        }
+
+    def close_stream() -> None:
+        close = getattr(response, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
     def report(*, final: bool = False) -> None:
         nonlocal last_progress_at
         if progress is None:
@@ -154,38 +256,45 @@ def _aggregate_chat_stream(
         )
         last_progress_at = now
 
-    for chunk in chunks:
-        chunk_count += 1
-        payload = _mapping(chunk)
-        if response_id is None and payload.get("id") is not None:
-            response_id = str(payload["id"])
-        if returned_model is None and payload.get("model") is not None:
-            returned_model = str(payload["model"])
-        if created is None:
-            created = payload.get("created")
-        if system_fingerprint is None:
-            system_fingerprint = payload.get("system_fingerprint")
-        chunk_usage = payload.get("usage")
-        if isinstance(chunk_usage, Mapping):
-            usage = dict(chunk_usage)
+    try:
+        for chunk in chunks:
+            chunk_count += 1
+            payload = _mapping(chunk)
+            if response_id is None and payload.get("id") is not None:
+                response_id = str(payload["id"])
+            if returned_model is None and payload.get("model") is not None:
+                returned_model = str(payload["model"])
+            if created is None:
+                created = payload.get("created")
+            if system_fingerprint is None:
+                system_fingerprint = payload.get("system_fingerprint")
+            chunk_usage = payload.get("usage")
+            if isinstance(chunk_usage, Mapping):
+                usage = dict(chunk_usage)
 
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
-            continue
-        choice = choices[0]
-        if isinstance(choice.get("finish_reason"), str):
-            finish_reason = choice["finish_reason"]
-        delta = choice.get("delta")
-        if not isinstance(delta, Mapping):
-            continue
-        reasoning_delta = _stream_text(delta, "reasoning_content")
-        content_delta = _stream_text(delta, "content")
-        if reasoning_delta:
-            reasoning_parts.append(reasoning_delta)
-        if content_delta:
-            content_parts.append(content_delta)
-        if reasoning_delta or content_delta:
-            report()
+            choices = payload.get("choices")
+            if not isinstance(choices, list) or not choices or not isinstance(choices[0], Mapping):
+                continue
+            choice = choices[0]
+            if isinstance(choice.get("finish_reason"), str):
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta")
+            if not isinstance(delta, Mapping):
+                continue
+            reasoning_delta = _stream_text(delta, "reasoning_content")
+            content_delta = _stream_text(delta, "content")
+            if reasoning_delta:
+                reasoning_parts.append(reasoning_delta)
+            if content_delta:
+                content_parts.append(content_delta)
+            if reasoning_delta or content_delta:
+                report()
+    except _ProviderWallClockTimeout as error:
+        close_stream()
+        raise _ChatStreamInterrupted(error, partial_response()) from error
+    except Exception as error:
+        close_stream()
+        raise _ChatStreamInterrupted(error, partial_response()) from error
 
     if chunk_count == 0:
         raise ValueError("chat stream returned no chunks")
@@ -211,7 +320,7 @@ def _aggregate_chat_stream(
             }
         ],
         "usage": usage,
-        "stream": {"chunk_count": chunk_count},
+        "stream": stream_metadata(completed=True),
     }
 
 
@@ -333,26 +442,59 @@ class PilotProviderClient:
     ) -> AgentCompletion:
         actual, sanitized = self._request(messages)
         started = time.perf_counter()
+        payload: dict[str, Any] | None = None
         try:
-            if self.model.protocol == "chat_completions":
-                response = self.transport.chat_completion(**actual)
-                payload = _aggregate_chat_stream(response, progress=progress)
-            else:
-                response = self.transport.responses(**actual)
-                payload = _mapping(response)
+            with _provider_wall_clock_deadline(self.model.timeout_seconds):
+                if self.model.protocol == "chat_completions":
+                    response = self.transport.chat_completion(**actual)
+                    payload = _aggregate_chat_stream(response, progress=progress)
+                else:
+                    response = self.transport.responses(**actual)
+                    payload = _mapping(response)
             elapsed_ms = (time.perf_counter() - started) * 1000
             if self.model.protocol == "chat_completions":
                 text, reasoning_content = _chat_output(payload)
             else:
                 text = _responses_text(payload)
                 reasoning_content = None
+        except _ChatStreamInterrupted as error:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            cause = error.cause
+            message = str(cause).replace(self._api_key, "<redacted>")
+            if self._base_url:
+                message = message.replace(self._base_url, "<redacted>")
+            raise AgentProviderError(
+                f"{type(cause).__name__}: {message[:2000]}",
+                elapsed_ms=elapsed_ms,
+                raw_response=error.partial_response,
+                sanitized_request=sanitized,
+            ) from error
+        except _ProviderWallClockTimeout as error:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            raise AgentProviderError(
+                str(error),
+                elapsed_ms=elapsed_ms,
+                raw_response=payload,
+                sanitized_request=sanitized,
+            ) from error
+        except _ChatOutputTruncated as error:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            raise AgentOutputTruncated(
+                str(error),
+                elapsed_ms=elapsed_ms,
+                raw_response=payload,
+                sanitized_request=sanitized,
+            ) from error
         except Exception as error:
             elapsed_ms = (time.perf_counter() - started) * 1000
             message = str(error).replace(self._api_key, "<redacted>")
             if self._base_url:
                 message = message.replace(self._base_url, "<redacted>")
             raise AgentProviderError(
-                f"{type(error).__name__}: {message[:2000]}", elapsed_ms=elapsed_ms
+                f"{type(error).__name__}: {message[:2000]}",
+                elapsed_ms=elapsed_ms,
+                raw_response=payload,
+                sanitized_request=sanitized,
             ) from error
 
         usage = payload.get("usage")

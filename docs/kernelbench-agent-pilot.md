@@ -55,8 +55,18 @@ DeepSeek Chat Completions are consumed as a stream. `--live` reports cumulative 
 answer character counts without printing the reasoning text; the completed response is aggregated
 into the same response artifact used by later turns.
 
-The smoke study allows 32768 total output tokens, while the full studies allow 65536 because
-DeepSeek counts both `reasoning_content` and the final answer against `max_tokens`.
+`timeout_seconds` is also enforced as a wall-clock limit around the native provider call. If a
+stream ends with a transport error or deadline, its error artifact records the received chunk,
+reasoning-character, and answer-character counts plus the latest usage metadata, without storing
+partial reasoning text.
+
+If a thinking response reaches `max_tokens` before producing visible content, the collector records
+`output_truncated`, saves the aggregate response metadata, and uses the next configured iteration
+for a code-only retry prompt. It does not insert an empty assistant message into DeepSeek history.
+
+All DeepSeek studies allow 65536 total output tokens because the provider counts both
+`reasoning_content` and the final answer against `max_tokens`. The prompt also asks the model to
+reserve response budget for the complete code block.
 
 ```bash
 uv run abstrak-kernelbench agent-collect \

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import signal
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +22,7 @@ from abstrak.evaluation.agent_figures import plot_agent_run
 from abstrak.evaluation.agent_provider import (
     AgentCompletion,
     AgentMessage,
+    AgentOutputTruncated,
     AgentProviderError,
     PilotProviderClient,
 )
@@ -193,6 +197,7 @@ def test_initial_messages_include_concise_target_contract(
     assert len(messages) == 1
     assert "TARGET CONTRACT (must follow)" in messages[0].content
     assert required_api in messages[0].content
+    assert "Reason concisely" in messages[0].content
     assert "## Model scaffold and launch example" not in messages[0].content
     if target == "cute":
         assert "compile a custom CUDA extension" in " ".join(messages[0].content.split())
@@ -230,7 +235,7 @@ def test_smoke_study_is_one_deepseek_triton_trajectory() -> None:
     assert study.targets == ("triton",)
     assert [task.ref for task in study.tasks] == ["level1-problem1"]
     assert study.generation.reasoning_effort == "xhigh"
-    assert study.generation.max_output_tokens == 32768
+    assert study.generation.max_output_tokens == 65536
     assert study.models[0].timeout_seconds == 1200.0
 
 
@@ -446,9 +451,22 @@ def test_correct_candidate_without_timing_is_retained_as_incumbent(tmp_path: Pat
 
 def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path) -> None:
     study = _study(targets=("triton", "cute"), iterations=1)
+    provider_error = AgentProviderError(
+        "temporary failure",
+        elapsed_ms=3.0,
+        sanitized_request={"model": "test/model"},
+        raw_response={
+            "stream": {
+                "chunk_count": 7,
+                "reasoning_chars": 31,
+                "content_chars": 0,
+                "completed": False,
+            }
+        },
+    )
     client = FakeClient(
         [
-            AgentProviderError("temporary failure", elapsed_ms=3.0),
+            provider_error,
             _completion(_candidate("cute"), "r2"),
         ]
     )
@@ -470,6 +488,72 @@ def test_provider_error_stops_one_trajectory_but_matrix_continues(tmp_path: Path
         for line in (result.run_directory / "raw" / "attempts.jsonl").read_text().splitlines()
     ]
     assert attempts[0]["provider_elapsed_ms"] == 3.0
+    response = json.loads(
+        (
+            result.run_directory
+            / "raw"
+            / "responses"
+            / "test-model--level1-problem1--triton"
+            / "iteration-001.json"
+        ).read_text()
+    )
+    assert response["sanitized_request"] == {"model": "test/model"}
+    assert response["raw_response"]["stream"]["reasoning_chars"] == 31
+
+
+def test_output_truncation_consumes_iteration_and_retries_without_empty_assistant(
+    tmp_path: Path,
+) -> None:
+    study = _study(iterations=2)
+    truncated = AgentOutputTruncated(
+        "chat response exhausted max_tokens before emitting final text (finish_reason=length)",
+        elapsed_ms=4.0,
+        sanitized_request={"max_tokens": 65536},
+        raw_response={
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"role": "assistant", "content": ""},
+                }
+            ]
+        },
+    )
+    client = FakeClient([truncated, _completion(_candidate("recovered"), "r2")])
+    result = AgentCollectionRunner(
+        study=study,
+        checkout=FakeCheckout(),  # type: ignore[arg-type]
+        provider_factory=lambda model: client,
+        evaluator=FakeEvaluator([1.2]),
+        worker_kernelbench_root="/worker/KernelBench",
+        artifact_root=tmp_path,
+        run_id="truncated-retry",
+    ).run()
+
+    assert result.generation_status_counts == {"generated": 1, "output_truncated": 1}
+    assert len(client.messages) == 2
+    assert [message.role for message in client.messages[1]] == [MessageRole.USER]
+    assert "TARGET CONTRACT (must follow)" in client.messages[1][0].content
+    assert "exhausted its output budget" in client.messages[1][0].content
+    assert "immediately return" in client.messages[1][0].content
+    attempts = [
+        json.loads(line)
+        for line in (result.run_directory / "raw" / "attempts.jsonl").read_text().splitlines()
+    ]
+    assert [item["generation_status"] for item in attempts] == [
+        "output_truncated",
+        "generated",
+    ]
+    truncated_response = json.loads(
+        (
+            result.run_directory
+            / "raw"
+            / "responses"
+            / "test-model--level1-problem1--triton"
+            / "iteration-001.json"
+        ).read_text()
+    )
+    assert truncated_response["error_kind"] == "output_truncated"
+    assert truncated_response["raw_response"]["choices"][0]["finish_reason"] == "length"
 
 
 def test_collector_artifacts_feed_real_analysis_and_plot(tmp_path: Path) -> None:
@@ -717,10 +801,151 @@ def test_pilot_provider_uses_deepseek_wire_parameters_and_aggregates_stream() ->
     assert completion.reasoning_content == "reason trace"
     assert completion.output_tokens == 11
     assert completion.reasoning_tokens == 5
-    assert completion.raw_response["stream"] == {"chunk_count": 4}
+    assert completion.raw_response["stream"] == {
+        "chunk_count": 4,
+        "reasoning_chars": len("reason trace"),
+        "content_chars": len(_candidate("streamed")),
+        "completed": True,
+    }
     assert progress[0].startswith("stream progress")
     assert progress[-1].startswith("stream completed")
     assert "reason trace" not in "\n".join(progress)
+
+
+def test_pilot_provider_preserves_partial_stream_metadata_on_error() -> None:
+    def interrupted_stream():
+        yield {
+            "id": "chat-stream-partial",
+            "created": 1,
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": None,
+                    "delta": {"role": "assistant", "reasoning_content": "partial"},
+                }
+            ],
+        }
+        raise TimeoutError("read stalled")
+
+    transport = FakeTransport(interrupted_stream())
+    deepseek = _model("deepseek-v4-flash").model_copy(
+        update={
+            "litellm_provider": "deepseek",
+            "api_model": "deepseek/deepseek-v4-flash",
+        }
+    )
+    client = PilotProviderClient(
+        deepseek,
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+
+    with pytest.raises(AgentProviderError) as raised:
+        client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
+
+    error = raised.value
+    assert "TimeoutError: read stalled" in str(error)
+    assert error.raw_response is not None
+    assert error.raw_response["stream"] == {
+        "chunk_count": 1,
+        "reasoning_chars": len("partial"),
+        "content_chars": 0,
+        "completed": False,
+    }
+    assert error.raw_response["choices"][0]["message"] == {
+        "role": "assistant",
+        "content": "",
+    }
+    assert error.sanitized_request is not None
+
+
+def test_pilot_provider_enforces_wall_clock_deadline() -> None:
+    if (
+        not hasattr(signal, "setitimer")
+        or threading.current_thread() is not threading.main_thread()
+        or signal.getitimer(signal.ITIMER_REAL)[0] > 0
+    ):
+        pytest.skip("wall-clock signal deadline is unavailable in this test process")
+
+    class BlockingTransport(FakeTransport):
+        def chat_completion(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            self.call_count += 1
+            time.sleep(0.2)
+            return self.payload
+
+    transport = BlockingTransport({"choices": [{"message": {"content": "late"}}]})
+    model = _model().model_copy(update={"timeout_seconds": 0.02})
+    client = PilotProviderClient(
+        model,
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+
+    with pytest.raises(AgentProviderError, match="wall-clock deadline exceeded 0.02s") as raised:
+        client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
+
+    assert raised.value.raw_response is None
+    assert raised.value.sanitized_request is not None
+
+
+def test_pilot_provider_classifies_reasoning_only_length_stream() -> None:
+    chunks = [
+        {
+            "id": "chat-stream-truncated",
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": None,
+                    "delta": {"role": "assistant", "reasoning_content": "still thinking"},
+                }
+            ],
+        },
+        {
+            "id": "chat-stream-truncated",
+            "model": "deepseek-v4-flash",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "length",
+                    "delta": {},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 7,
+                "completion_tokens": 65536,
+                "completion_tokens_details": {"reasoning_tokens": 65536},
+            },
+        },
+    ]
+    transport = FakeTransport(iter(chunks))
+    deepseek = _model("deepseek-v4-flash").model_copy(
+        update={
+            "litellm_provider": "deepseek",
+            "api_model": "deepseek/deepseek-v4-flash",
+        }
+    )
+    client = PilotProviderClient(
+        deepseek,
+        AgentGenerationConfig(),
+        environment={"TEST_API_KEY": "secret", "TEST_BASE_URL": "https://provider.invalid"},
+        transport=transport,
+    )
+
+    with pytest.raises(AgentOutputTruncated) as raised:
+        client.complete([AgentMessage(role=MessageRole.USER, content="prompt")])
+
+    error = raised.value
+    assert "exhausted max_tokens" in str(error)
+    assert error.raw_response is not None
+    assert error.raw_response["choices"][0]["finish_reason"] == "length"
+    assert error.raw_response["choices"][0]["message"]["content"] == ""
+    assert error.raw_response["usage"]["completion_tokens"] == 65536
+    assert error.sanitized_request is not None
 
 
 def test_pilot_provider_keeps_an_explicit_falsy_transport() -> None:

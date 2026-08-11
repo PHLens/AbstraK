@@ -30,6 +30,7 @@ from abstrak.evaluation.agent_provider import (
     AgentCompletion,
     AgentCompletionClient,
     AgentMessage,
+    AgentOutputTruncated,
     AgentProviderError,
 )
 from abstrak.evaluation.agent_worker import AgentEvaluationJob
@@ -46,6 +47,8 @@ RUNNABLE_OUTPUT_CONTRACT = """
 Return exactly one Python code block and nothing else. The block must define the complete
 `ModelNew` implementation, must be directly runnable by KernelBench, and must use the requested
 backend. Do not return prose, patches, shell commands, placeholders, or partial snippets.
+
+Reason concisely and reserve enough of the response budget to emit the complete Python code block.
 """.strip()
 
 _PYTHON_BLOCK = re.compile(r"```python[ \t]*\r?\n(?P<code>.*?)```", re.DOTALL | re.IGNORECASE)
@@ -391,6 +394,22 @@ def _parse_feedback(
     return "\n".join(lines)
 
 
+def _truncation_feedback(
+    best_speedup: float | None,
+    *,
+    incumbent_code: str | None = None,
+) -> str:
+    lines = [
+        "The previous response exhausted its output budget before emitting a final answer.",
+        "Stop analysis now and immediately return the complete directly runnable ModelNew as "
+        "exactly one Python code block and nothing else.",
+    ]
+    if best_speedup is not None:
+        lines.insert(1, f"best_correct_speedup_so_far: {best_speedup:.6g}")
+    lines.extend(_incumbent_feedback(incumbent_code, None))
+    return "\n".join(lines)
+
+
 def _bounded_history(
     initial_messages: Sequence[AgentMessage],
     completion: AgentCompletion,
@@ -562,6 +581,53 @@ class AgentCollectionRunner:
             try:
                 with self._heartbeat(f"{identifier} iteration={iteration} provider request"):
                     completion = client.complete(messages, progress=report_stream)
+            except AgentOutputTruncated as error:
+                self._log(
+                    f"{identifier} iteration={iteration} provider output truncated; "
+                    "continuing with a code-only retry turn"
+                )
+                _write_json(
+                    response_path,
+                    {
+                        "schema_version": "kernelbench-agent-provider-error.v1",
+                        "error_kind": "output_truncated",
+                        "error": str(error),
+                        "elapsed_ms": error.elapsed_ms,
+                        "sanitized_request": error.sanitized_request,
+                        "raw_response": error.raw_response,
+                    },
+                )
+                records.append(
+                    self._attempt(
+                        attempts_path=attempts_path,
+                        model=model,
+                        task=task,
+                        material=material,
+                        target=target,
+                        identifier=identifier,
+                        iteration=iteration,
+                        best_speedup=best_speedup,
+                        completion=None,
+                        generation_status="output_truncated",
+                        response_path=response_path,
+                        provider_elapsed_ms=error.elapsed_ms,
+                        error=str(error),
+                    )
+                )
+                retry_feedback = _truncation_feedback(
+                    best_speedup,
+                    incumbent_code=incumbent_code,
+                )
+                # The original request is a single user prompt. Fold the retry instruction into it
+                # because there is no valid assistant turn to retain after an empty response.
+                messages = [
+                    initial_messages[0].model_copy(
+                        update={
+                            "content": f"{initial_messages[0].content}\n\n{retry_feedback}",
+                        }
+                    )
+                ]
+                continue
             except AgentProviderError as error:
                 self._log(f"{identifier} iteration={iteration} provider failed: {error}")
                 _write_json(
@@ -570,6 +636,8 @@ class AgentCollectionRunner:
                         "schema_version": "kernelbench-agent-provider-error.v1",
                         "error": str(error),
                         "elapsed_ms": error.elapsed_ms,
+                        "sanitized_request": error.sanitized_request,
+                        "raw_response": error.raw_response,
                     },
                 )
                 records.append(

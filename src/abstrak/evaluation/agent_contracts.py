@@ -97,7 +97,7 @@ class KernelBenchAgentStudy(StudyModel):
         return sha256_json(self)
 
 
-GenerationStatus = Literal["generated", "provider_error", "parse_failure"]
+GenerationStatus = Literal["generated", "provider_error", "parse_failure", "output_truncated"]
 EvaluationStatus = Literal[
     "not_run",
     "evaluated",
